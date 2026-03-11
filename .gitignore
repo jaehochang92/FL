@@ -1,0 +1,3 @@
+# Exclude writing directory
+writing/
+%OUTDIR%/

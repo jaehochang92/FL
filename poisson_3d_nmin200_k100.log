@@ -1,0 +1,11 @@
+
+============================================================
+Poisson Regression Simulation (3D)
+============================================================
+
+K=100 (50 replicates):
+  Oracle:  0.4068 ± 0.0335
+  NPEB:    0.3449 ± 0.0267
+  AdaMix:  0.3449 ± 0.0267
+
+✓ Saved: Simulations/outputs/poisson_3d_nmin200_k100/metrics.csv
