@@ -101,7 +101,16 @@ Run from repository root:
 # Optional: limit to a scenario or change reps
 export RUN_ARGS="--scenario poisson --reps 50"
 
-# Submit one array task per config index
+# Submit one array task per config index (many clusters require --account)
+bash Simulations/submit_slurm_array.sh --account <your_account>
+
+# Equivalent via environment variable
+export SLURM_ACCOUNT=<your_account>
+bash Simulations/submit_slurm_array.sh
+
+# Optional one-time setup: persistent local defaults
+cp Simulations/slurm_site_defaults.example.sh Simulations/slurm_site_defaults.sh
+# edit ACCOUNT=... in Simulations/slurm_site_defaults.sh
 bash Simulations/submit_slurm_array.sh
 ```
 
@@ -111,6 +120,8 @@ Notes:
 - The helper script computes the number of tasks using `python Simulations/run_all.py --list-configs`.
 - To run a single task manually on a node: `python Simulations/run_all.py --config-index <idx> --no-progress`.
 - You can set `PYTHON_BIN` to a specific interpreter if your cluster does not use `python3`.
+- `submit_slurm_array.sh` also accepts `--partition`, `--qos`, `--time`, `--mem`, and `--cpus`.
+- `submit_slurm_array.sh` auto-loads `Simulations/slurm_site_defaults.sh` when present.
 
 ## Requirements
 
