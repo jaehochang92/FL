@@ -3,7 +3,7 @@
 # This file is sourced by Simulations/submit_slurm_array.sh.
 
 # Required on many clusters (including OSC):
-ACCOUNT="PZS0712"
+ACCOUNT="PAS1316"
 
 # Optional scheduler defaults:
 # PARTITION=""
