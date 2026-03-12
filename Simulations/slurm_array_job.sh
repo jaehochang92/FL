@@ -8,11 +8,30 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# In some SLURM setups the batch script is executed from a spool copy under
+# /var/spool/slurmd, so BASH_SOURCE-based paths are not stable. Prefer the
+# original submit directory when available.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  SUBMIT_DIR="$SLURM_SUBMIT_DIR"
+else
+  SUBMIT_DIR="$(pwd)"
+fi
 
-mkdir -p "$ROOT_DIR/logs"
-cd "$SCRIPT_DIR"
+if [[ -f "$SUBMIT_DIR/run_all.py" ]]; then
+  # Submitted from Simulations/
+  SIM_DIR="$SUBMIT_DIR"
+  ROOT_DIR="$(cd "$SUBMIT_DIR/.." && pwd)"
+elif [[ -f "$SUBMIT_DIR/Simulations/run_all.py" ]]; then
+  # Submitted from repository root
+  SIM_DIR="$SUBMIT_DIR/Simulations"
+  ROOT_DIR="$SUBMIT_DIR"
+else
+  echo "Could not locate Simulations/run_all.py from SUBMIT_DIR='$SUBMIT_DIR'" >&2
+  exit 1
+fi
+
+mkdir -p "$SIM_DIR/logs"
+cd "$SIM_DIR"
 
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   echo "SLURM_ARRAY_TASK_ID is not set. Submit as a job array." >&2
