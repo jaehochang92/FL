@@ -1,3 +1,4 @@
 # Exclude writing directory
 writing/
 %OUTDIR%/
+.github/

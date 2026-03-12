@@ -1,105 +1,115 @@
 # Simulations
 
-Simulation code for heteroskedastic personalized federated learning (Algorithm 2 in the paper).
+Simulation code for the revised federated-learning experiments in the paper.
 
 ## Overview
 
-**Data model:**
-$$
-x_k \mid \theta_k \sim \mathcal{N}\!\left(\theta_k,\; \Sigma^{(k)}(\theta_k) / n^{(k)}\right)
-$$
-where $\Sigma(\theta)$ is a parameter-dependent diagonal covariance function and $n^{(k)}$ is client $k$'s local sample size.
+The simulation framework is organized around a shared `Scenario` base class with three concrete scenarios:
 
-**$G_0$:** Three-circle mixture in 2D (centroids: $(-2,0)$, $(2,0)$, $(0,2.5)$; radii: $1$; equal weights).
+- `quadratic`: Gaussian sample means with diagonal variance $\Sigma(\theta) = \operatorname{diag}(\theta \odot \theta)$
+- `logistic`: multiclass logistic regression with $C = 6$ classes
+- `poisson`: Poisson regression fit by IRLS
 
-**Estimators:**
-- **NPEB (proposed)**: NPMLE via `npeb.GLMixture` with MOSEK + EM refinement with atom-dependent covariance (heteroskedastic)
-- **Soloff**: NPMLE homoscedastic baseline (assumes $\Sigma(\theta)$ constant, covariance estimated from $\text{diag}(x^2)$)
-- **AdaMix**: Gaussian mixture baseline (Ozkara et al., 2023)
-- **Oracle Bayes**: Posterior mean using true $G_0$
+All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and report client-level RMSE for four estimators:
 
-**Metric:** $\text{RMSE} = \left(\frac{1}{K}\sum_{k=1}^K \|\hat\theta_k - \theta_k\|^2\right)^{1/2}$
+- `vaneb`: the proposed variance-adaptive NPEB estimator
+- `npeb`: the Soloff et al. homoscedastic NPMLE baseline
+- `adamix`: Gaussian-mixture empirical Bayes baseline
+- `oracle`: Bayes posterior mean under the true prior and variance model
 
-## Variance Functions
+## Sweep Design
 
-Select via `--sigma2-fn` or `SIGMA2_FN` environment variable:
+For each scenario, `run_all.py` executes two sweeps:
 
-| Option | Formula | Description |
-|--------|---------|-------------|
-| `quadratic` (default) | $\Sigma_j(\theta) = \theta_j^2$ | Variance grows quadratically |
-| `linear` | $\Sigma_j(\theta) = \|\theta_j\|$ | Linear variance |
-| `constant` | $\Sigma_j(\theta) = 1$ | Homoscedastic |
-| `sqrt` | $\Sigma_j(\theta) = \sqrt{\|\theta_j\|}$ | Sublinear variance |
+- $n_{\min} \in \{50, 200, 800\}$ with $K = 800$ fixed
+- $K \in \{50, 200, 800\}$ with $n_{\min} = 800$ fixed
 
-The variance function determines the ridgeline manifold geometry in Algorithm 2's atom-covariance coupling.
-
-**Variance Clipping:** To comply with theoretical assumptions ($\underline{s} \leq \Sigma_j(\theta) \leq \overline{s}$), all variance functions are clipped to $[s_{\min}, s_{\max}] = [0.01, 100]$. The constant variance function naturally satisfies these bounds.
+The default run uses 50 replicates per configuration.
 
 ## Quick Start
 
 ```bash
-# Install
 pip install -r Simulations/requirements.txt
 
-# Run the 3×3 grid (n_min × K) of 2D quadratic simulations
-python Simulations/run_quad_grid.py
+# Full sweep for all three scenarios
+python Simulations/run_all.py
 
-# Aggregate results + generate figures
-python Simulations/analyze_results.py
+# Quick validation run
+python Simulations/run_all.py --smoke
 
-# Table only (no figures)
-python Simulations/analyze_results.py --no-plot
+# Run one scenario only
+python Simulations/run_all.py --scenario logistic
 
-# Figures only (no table)
-python Simulations/analyze_results.py --no-table
+# List indexed configurations (useful for SLURM arrays)
+python Simulations/run_all.py --list-configs
+
+# Run exactly one indexed configuration
+python Simulations/run_all.py --config-index 5
+
+# Generate the six manuscript figures from completed outputs
+python Simulations/make_figures.py
 ```
 
-**Outputs:** `outputs/quad2d_nmin{N}_k{K}/metrics.csv`, `figures/quad_*.pdf`
+## Conda Environment (HPC)
 
-## Key Implementation Details
+Create the environment from YAML (recommended on clusters):
 
-**NPEB (Algorithm 2, heteroskedastic)**
-- Initializes atoms from observations: $\{a_j\} \leftarrow \{x^{(k)}\}$
-- MOSEK conic solver fits weights: $\max_w \sum_k \log \sum_j w_j \varphi_d(x^{(k)}; a_j, \Sigma^{(k)}_j)$
-- EM refinement updates atoms, then **recomputes covariances** $\Sigma^{(k)}_j = \Sigma^{(k)}(a_j)$ at new locations
-- Returns posterior mean: $\hat\theta^{(k)} = \sum_j r_{kj} a_j$ where $r_{kj} \propto w_j \varphi_d(x^{(k)}; a_j, \Sigma^{(k)}_j)$
-- This atom-covariance coupling is essential for heteroskedastic consistency with the modified Tweedie formula.
+```bash
+conda env create -f Simulations/environment.yml
+conda activate fl-sim
+```
 
-**Soloff (homoscedastic baseline)**
-- Assumes variance is **parameter-independent**: $\Sigma(\theta) = \text{const}$
-- Estimates fixed covariance from data: $\Sigma_{\text{fixed}} = \text{diag}(\bar{x}^2)$ where $\bar{x}$ is empirical average
-- NPMLE fitted with `homoscedastic=True`: all clients share same precision structure
-- Provides a baseline showing cost of ignoring heteroskedasticity in the true data model
+Update an existing environment after dependency changes:
+
+```bash
+conda env update -f Simulations/environment.yml --prune
+```
+
+Batch-safe activation inside SLURM scripts:
+
+```bash
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate fl-sim
+```
+
+Outputs are written under `Simulations/outputs/` when launched from the repository root, and under `outputs/` relative to `run_all.py` if launched from inside the `Simulations` directory.
 
 ## File Structure
 
 | File | Purpose |
 |------|---------|
-| `simulate_fl.py` | Core simulation driver (all 4 estimators) |
-| `analyze_results.py` | Aggregate metrics + generate figures/LaTeX table |
-| `run_quad_grid.py` | Runner: launches 3×3 grid of quadratic simulations |
-| `logistic_regression_sim.py` | Federated logistic regression simulation |
+| `scenario_base.py` | Shared configuration, prior geometry, estimators, and scenario base class |
+| `scenario_quadratic.py` | Quadratic sample-means scenario |
+| `scenario_logistic.py` | Multiclass logistic scenario |
+| `scenario_poisson.py` | Poisson regression scenario |
+| `run_all.py` | Unified sweep runner for all scenarios |
+| `make_figures.py` | Generate the six manuscript figures from completed outputs |
+| `slurm_array_job.sh` | One SLURM array task = one indexed simulation config |
+| `submit_slurm_array.sh` | Helper to submit the full config list as a SLURM array |
+| `environment.yml` | Conda environment definition for local/HPC reproducibility |
 | `requirements.txt` | Python dependencies |
 
-## Outputs
+## SLURM HPC Usage
 
-- **`outputs/quad2d_nmin{N}_k{K}/metrics.csv`**: Per-replicate RMSE for each grid cell
-- **`outputs/quad2d_nmin{N}_k{K}/snapshots/`**: Single-replicate point clouds
-- **`outputs/quad2d_nmin{N}_k{K}/config.json`**: Configuration (variance function, prior, etc.)
-- **`figures/quad_k_scaling.pdf`**: RMSE vs $K$ (fixed $n_{\min}=100$)
-- **`figures/quad_nmin_effect.pdf`**: RMSE vs $n_{\min}$ (fixed $K=400$)
-- **`figures/quad_improvement_heatmap.pdf`**: NPEB improvement over Soloff (%)
-
-## Plotting Only
-
-To regenerate figures from existing simulation data:
+Run from repository root:
 
 ```bash
-python Simulations/analyze_results.py --no-table
+# Optional: limit to a scenario or change reps
+export RUN_ARGS="--scenario poisson --reps 50"
+
+# Submit one array task per config index
+bash Simulations/submit_slurm_array.sh
 ```
+
+Notes:
+
+- Array indexing is zero-based (`SLURM_ARRAY_TASK_ID` maps to `--config-index`).
+- The helper script computes the number of tasks using `python Simulations/run_all.py --list-configs`.
+- To run a single task manually on a node: `python Simulations/run_all.py --config-index <idx> --no-progress`.
+- You can set `PYTHON_BIN` to a specific interpreter if your cluster does not use `python3`.
 
 ## Requirements
 
-- Python 3.8+
-- `npeb` package with MOSEK solver (**required** for NPEB estimator)
-- Standard packages: `numpy`, `pandas`, `matplotlib`, `scikit-learn`, `scipy`, `tqdm`
+- Python 3.9+
+- `npeb` package with MOSEK support for the NPMLE-based estimators
+- Packages listed in `requirements.txt`
