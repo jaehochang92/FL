@@ -1,0 +1,9 @@
+{
+  "scenario": "logistic",
+  "K": 20,
+  "n_min": 100,
+  "n_max": 300,
+  "reps": 3,
+  "em_iters": 25,
+  "seed": 20260311
+}

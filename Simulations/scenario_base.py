@@ -367,6 +367,7 @@ class Scenario(ABC):
     """Base class for a federated learning simulation scenario."""
 
     name: str = "base"
+    prior_scale: float = 1.0  # subclasses override when prior atoms are scaled
 
     @abstractmethod
     def generate_data(
@@ -397,8 +398,9 @@ class Scenario(ABC):
         n_k = data["n_k"]
         oracle_obs_var = data.get("oracle_obs_var", obs_var)
 
-        # Oracle
-        atoms = generate_prior_atoms(atoms_per_curve=200)
+        # Oracle — use the same prior_scale applied in generate_data so atoms
+        # are aligned with the actual theta_true support.
+        atoms = generate_prior_atoms(atoms_per_curve=200) * self.prior_scale
         theta_oracle = oracle_estimator(x, atoms, oracle_obs_var)
 
         # VANEB (proposed)

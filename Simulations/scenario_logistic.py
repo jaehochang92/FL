@@ -22,7 +22,7 @@ from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
     sample_prior,
 )
-from typing import Dict
+from typing import Dict, Optional
 
 C = 6  # number of classes
 
@@ -41,6 +41,33 @@ for _ in range(C):
     U, _, Vt = np.linalg.svd(M, full_matrices=False)
     CLASS_PROJECTIONS.append(U @ Vt)  # orthogonal matrix
 CLASS_PROJECTIONS = np.array(CLASS_PROJECTIONS)  # (C, d, d)
+CLASS_PROJECTIONS_T = np.transpose(CLASS_PROJECTIONS, (0, 2, 1))
+
+# Cache for Monte Carlo Fisher approximation keyed by n_mc.
+_MC_CACHE = {}
+
+
+def _project_features(X: np.ndarray) -> np.ndarray:
+    """Project X through all class-specific matrices.
+
+    Returns:
+        projected: (n, C, d) where projected[:, c, :] = X @ B_c^T
+    """
+    return np.einsum("nd,cdk->nck", X, CLASS_PROJECTIONS_T)
+
+
+def _get_mc_cache(n_mc: int) -> tuple:
+    """Return cached Monte Carlo projections used in population Fisher."""
+    cached = _MC_CACHE.get(n_mc)
+    if cached is not None:
+        return cached
+
+    rng_mc = np.random.RandomState(123)
+    X_mc = rng_mc.randn(n_mc, DIM)
+    proj_mc = _project_features(X_mc)          # (n_mc, C, d)
+    proj_mc_sq = proj_mc ** 2                  # (n_mc, C, d)
+    _MC_CACHE[n_mc] = (proj_mc, proj_mc_sq)
+    return proj_mc, proj_mc_sq
 
 
 def _logits(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
@@ -48,13 +75,8 @@ def _logits(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
 
     logit_c = (B_c X^T)^T θ = X B_c^T θ
     """
-    # X: (n, d), CLASS_PROJECTIONS: (C, d, d), theta: (d,)
-    # For each class c: projected = X @ B_c^T @ theta → (n,)
-    n = X.shape[0]
-    out = np.zeros((n, C))
-    for c in range(C):
-        out[:, c] = X @ CLASS_PROJECTIONS[c].T @ theta
-    return out
+    projected = _project_features(X)  # (n, C, d)
+    return np.einsum("ncd,d->nc", projected, theta)
 
 
 def _probs(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
@@ -76,36 +98,53 @@ def generate_multiclass_data(
     d = DIM
     X = rng.standard_normal(size=(n, d))
     probs = _probs(X, theta_true)  # (n, C)
-    y = np.array([rng.choice(C, p=p) for p in probs])
+    # Vectorized categorical sampling per row.
+    u = rng.random(n)[:, None]
+    y = np.argmax(u <= np.cumsum(probs, axis=1), axis=1)
     return y, X
 
 
-def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> np.ndarray:
+def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> tuple:
     """Fit multiclass logistic regression via L-BFGS on cross-entropy.
 
-    Returns theta_hat (d,).
+    Returns:
+        theta_hat: (d,)
+        fisher_diag: (d,) empirical Fisher at theta_hat
     """
     n = X.shape[0]
+    projected = _project_features(X)  # (n, C, d)
+    y_onehot = np.eye(C)[y]
 
-    def neg_log_lik(theta):
-        logit = _logits(X, theta)
-        log_p = logit - np.log(np.sum(np.exp(logit - logit.max(axis=1, keepdims=True)), axis=1, keepdims=True) + 1e-300) - logit.max(axis=1, keepdims=True) + logit.max(axis=1, keepdims=True)
-        # Numerically stable:
-        log_p = logit - np.log(np.exp(logit).sum(axis=1, keepdims=True) + 1e-300)
-        # clip for safety
-        log_p = np.clip(log_p, -50, 0)
-        return -np.mean(log_p[np.arange(n), y])
-
-    def neg_log_lik_stable(theta):
-        logit = _logits(X, theta)
+    def neg_log_lik_and_grad(theta):
+        logit = np.einsum("ncd,d->nc", projected, theta)
         max_l = logit.max(axis=1, keepdims=True)
         log_sum_exp = max_l.ravel() + np.log(np.sum(np.exp(logit - max_l), axis=1))
         chosen_logit = logit[np.arange(n), y]
-        return -np.mean(chosen_logit - log_sum_exp)
+        nll = -np.mean(chosen_logit - log_sum_exp)
 
-    result = minimize(neg_log_lik_stable, x0=np.zeros(DIM), method='L-BFGS-B',
-                      options={'maxiter': 200})
-    return result.x
+        probs = scipy_softmax(logit, axis=1)
+        # grad = -E[(y_onehot - p) * feature]
+        grad = -np.einsum("nc,ncd->d", (y_onehot - probs), projected) / n
+        return nll, grad
+
+    def obj(theta):
+        nll, _ = neg_log_lik_and_grad(theta)
+        return nll
+
+    def jac(theta):
+        _, grad = neg_log_lik_and_grad(theta)
+        return grad
+
+    result = minimize(
+        obj,
+        x0=np.zeros(DIM),
+        jac=jac,
+        method="L-BFGS-B",
+        options={"maxiter": 120, "gtol": 1e-6},
+    )
+    theta_hat = result.x
+    fisher_diag = empirical_fisher_diag(X, theta_hat, projected=projected)
+    return theta_hat, fisher_diag
 
 
 def population_fisher_diag(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
@@ -124,19 +163,22 @@ def population_fisher_diag(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
     if single:
         theta = theta[None, :]
     m, d = theta.shape
-    rng_mc = np.random.RandomState(123)
-    X_mc = rng_mc.randn(n_mc, d)
+    proj_mc, proj_mc_sq = _get_mc_cache(n_mc)  # (n_mc, C, d)
 
     fisher = np.zeros((m, d))
-    for i in range(m):
-        # logits: (n_mc, C)
-        logit = _logits(X_mc, theta[i])
-        probs = scipy_softmax(logit, axis=1)  # (n_mc, C)
-        for c in range(C):
-            w = probs[:, c] * (1 - probs[:, c])  # (n_mc,)
-            projected = X_mc @ CLASS_PROJECTIONS[c].T  # (n_mc, d)
-            # (B_c X)_j^2 * w → average over MC samples
-            fisher[i] += np.mean(w[:, None] * projected ** 2, axis=0)
+    batch_size = 256
+    for start in range(0, m, batch_size):
+        end = min(start + batch_size, m)
+        theta_b = theta[start:end]  # (b, d)
+
+        # logits: (b, n_mc, C)
+        logits_b = np.einsum("ncd,bd->bnc", proj_mc, theta_b)
+        probs_b = scipy_softmax(logits_b, axis=2)
+        w_b = probs_b * (1.0 - probs_b)
+
+        # (b, d): average over n_mc and sum over C
+        fisher_b = np.einsum("bnc,ncd->bd", w_b, proj_mc_sq) / n_mc
+        fisher[start:end] = fisher_b
 
     fisher = np.maximum(fisher, 1e-6)
     if single:
@@ -144,19 +186,21 @@ def population_fisher_diag(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
     return fisher
 
 
-def empirical_fisher_diag(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
+def empirical_fisher_diag(
+    X: np.ndarray,
+    theta: np.ndarray,
+    projected: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Empirical Fisher diagonal at theta using data X.
 
     Returns (d,) diagonal of X^T diag(w) X summed over classes.
     """
-    n, d = X.shape
-    fisher = np.zeros(d)
-    logit = _logits(X, theta)
+    if projected is None:
+        projected = _project_features(X)
+    logit = np.einsum("ncd,d->nc", projected, theta)
     probs = scipy_softmax(logit, axis=1)
-    for c in range(C):
-        w = probs[:, c] * (1 - probs[:, c])
-        projected = X @ CLASS_PROJECTIONS[c].T
-        fisher += np.sum(w[:, None] * projected ** 2, axis=0)
+    w = probs * (1.0 - probs)
+    fisher = np.einsum("nc,ncd->d", w, projected ** 2)
     return np.maximum(fisher, 1e-6)
 
 
@@ -179,9 +223,9 @@ class LogisticScenario(Scenario):
 
         for i in range(K):
             y, X = generate_multiclass_data(theta_true[i], n_k[i], rng)
-            theta_hat[i] = fit_multiclass_logistic(y, X)
+            theta_hat_i, fisher_diag = fit_multiclass_logistic(y, X)
+            theta_hat[i] = theta_hat_i
             # Local Fisher-based variance estimate
-            fisher_diag = empirical_fisher_diag(X, theta_hat[i])
             obs_var[i] = 1.0 / np.maximum(fisher_diag, 1e-6)
 
         return {

@@ -23,6 +23,14 @@ from typing import Dict
 
 FEATURE_SCALE = 0.7  # σ_x
 
+# The Poisson exp link makes Fisher information grow as exp(σ²‖θ‖²/2).  With
+# the shared prior curves the trefoil knot reaches ‖θ‖≈4.9, giving a per-obs
+# Fisher ~1963 — three orders of magnitude larger than the other curves.  As K
+# increases, NPMLE is dominated by those clients and RMSE grows instead of
+# shrinking.  Scaling θ down by 0.5 brings max Fisher to ~8, keeping all five
+# curves in the same order of magnitude and obs_var within VARIANCE_BOUNDS.
+PRIOR_SCALE = 0.5  # applied to sample_prior output in generate_data
+
 
 def _population_fisher_diag(theta: np.ndarray) -> np.ndarray:
     """Closed-form population Fisher diagonal for Poisson regression.
@@ -80,6 +88,7 @@ def fit_poisson_regression(y: np.ndarray, X: np.ndarray) -> tuple:
 
 class PoissonScenario(Scenario):
     name = "poisson"
+    prior_scale = PRIOR_SCALE
 
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
         """Population variance = 1 / Fisher diagonal, clipped."""
@@ -88,7 +97,7 @@ class PoissonScenario(Scenario):
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         weights = np.asarray(cfg.prior_weights)
-        theta_true = sample_prior(K, weights, rng)
+        theta_true = sample_prior(K, weights, rng) * PRIOR_SCALE
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
 
         theta_hat = np.zeros((K, DIM))
@@ -99,8 +108,14 @@ class PoissonScenario(Scenario):
             y, X = generate_poisson_data(theta_true[i], n_k[i], rng)
             th, fisher_diag = fit_poisson_regression(y, X)
             theta_hat[i] = th
-            # Local empirical variance estimate for NPEB
-            obs_var[i] = 1.0 / np.maximum(fisher_diag, 1e-6)
+            # Clip obs_var to VARIANCE_BOUNDS / n_k so it stays consistent
+            # with oracle_obs_var and VANEB's variance_fn bounds.
+            raw_var = 1.0 / np.maximum(fisher_diag, 1e-6)
+            obs_var[i] = np.clip(
+                raw_var,
+                VARIANCE_BOUNDS["s_min"] / n_k[i],
+                VARIANCE_BOUNDS["s_max"] / n_k[i],
+            )
 
         return {
             "theta_true": theta_true,
