@@ -103,9 +103,17 @@ echo "RUN_ARGS='${RUN_ARGS}'"
 [[ -n "$PARTITION" ]] && echo "PARTITION='${PARTITION}'"
 [[ -n "$QOS" ]] && echo "QOS='${QOS}'"
 
+# Create the logs directory now so SLURM can open output files before the
+# job script runs (otherwise SLURM falls back to /var/spool/slurmd/logs and
+# fails with "Permission denied").
+LOGS_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOGS_DIR"
+
 SBATCH_ARGS=(
   "--array=0-${MAX_INDEX}"
   "--export=ALL,RUN_ARGS=${RUN_ARGS}"
+  "--output=${LOGS_DIR}/slurm_%A_%a.out"
+  "--error=${LOGS_DIR}/slurm_%A_%a.err"
 )
 
 [[ -n "$ACCOUNT" ]] && SBATCH_ARGS+=("--account=${ACCOUNT}")

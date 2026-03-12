@@ -107,11 +107,6 @@ bash Simulations/submit_slurm_array.sh --account <your_account>
 # Equivalent via environment variable
 export SLURM_ACCOUNT=<your_account>
 bash Simulations/submit_slurm_array.sh
-
-# Optional one-time setup: persistent local defaults
-cp Simulations/slurm_site_defaults.example.sh Simulations/slurm_site_defaults.sh
-# edit ACCOUNT=... in Simulations/slurm_site_defaults.sh
-bash Simulations/submit_slurm_array.sh
 ```
 
 Notes:
