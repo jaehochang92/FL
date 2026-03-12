@@ -48,6 +48,9 @@ python Simulations/run_all.py --config-index 5
 
 # Generate the six manuscript figures from completed outputs
 python Simulations/make_figures.py
+
+# Generate a 3D illustration of prior atoms
+python Simulations/plot_prior_atoms_3d.py
 ```
 
 ## Conda Environment (HPC)
@@ -84,6 +87,7 @@ Outputs are written under `Simulations/outputs/` when launched from the reposito
 | `scenario_poisson.py` | Poisson regression scenario |
 | `run_all.py` | Unified sweep runner for all scenarios |
 | `make_figures.py` | Generate the six manuscript figures from completed outputs |
+| `plot_prior_atoms_3d.py` | Create a 3D illustration of the five-curve prior atoms |
 | `slurm_array_job.sh` | One SLURM array task = one indexed simulation config |
 | `submit_slurm_array.sh` | Helper to submit the full config list as a SLURM array |
 | `environment.yml` | Conda environment definition for local/HPC reproducibility |

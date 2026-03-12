@@ -1,9 +1,0 @@
-{
-  "scenario": "quadratic",
-  "K": 800,
-  "n_min": 100,
-  "n_max": 300,
-  "reps": 1,
-  "em_iters": 25,
-  "seed": 20260311
-}
