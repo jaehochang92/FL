@@ -90,7 +90,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # shellcheck disable=SC2086
-COUNT=$("$PY" run_all.py --list-configs ${RUN_ARGS} | wc -l | tr -d ' ')
+COUNT=$("$PY" run_all.py --list-configs ${RUN_ARGS} | grep -E '^[[:space:]]*[0-9]+[[:space:]]' | wc -l | tr -d ' ')
 if [[ "$COUNT" -le 0 ]]; then
   echo "No configurations found." >&2
   exit 1
