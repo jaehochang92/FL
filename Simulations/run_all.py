@@ -39,9 +39,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Sweep configurations
 NMIN_SWEEP = [100, 200, 400, 800, 1600, 3200]       # vary n_min, fix K = 800
 K_SWEEP = NMIN_SWEEP.copy()      # vary K, fix n_min = 800
-K_FIXED = 800
-NMIN_FIXED = 800
-REPS = 50
+K_FIXED = 3200
+NMIN_FIXED = 100
+REPS = 20
 
 
 def build_configs(smoke: bool = False):
