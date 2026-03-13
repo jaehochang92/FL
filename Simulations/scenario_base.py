@@ -41,7 +41,7 @@ from npeb.GLMixture import mvn_pdf
 
 DIM = 3  # Fixed parameter dimension for all scenarios
 
-VARIANCE_BOUNDS = {"s_min": 0.01, "s_max": 30.0}
+VARIANCE_BOUNDS = {"s_min": 0.01, "s_max": 100.0}
 
 
 @dataclass

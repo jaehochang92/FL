@@ -110,12 +110,12 @@ def main() -> None:
 
     summary = load_summary()
 
-    plot_sweep(summary, "quadratic", "K", "nmin", 800, "quadratic_k_sweep")
-    plot_sweep(summary, "quadratic", "nmin", "K", 800, "quadratic_nmin_sweep")
-    plot_sweep(summary, "logistic", "K", "nmin", 800, "logistic_k_sweep")
-    plot_sweep(summary, "logistic", "nmin", "K", 800, "logistic_nmin_sweep")
-    plot_sweep(summary, "poisson", "K", "nmin", 800, "poisson_k_sweep")
-    plot_sweep(summary, "poisson", "nmin", "K", 800, "poisson_nmin_sweep")
+    plot_sweep(summary, "quadratic", "K", "nmin", 100, "quadratic_k_sweep")
+    plot_sweep(summary, "quadratic", "nmin", "K", 3200, "quadratic_nmin_sweep")
+    plot_sweep(summary, "logistic", "K", "nmin", 100, "logistic_k_sweep")
+    plot_sweep(summary, "logistic", "nmin", "K", 3200, "logistic_nmin_sweep")
+    plot_sweep(summary, "poisson", "K", "nmin", 100, "poisson_k_sweep")
+    plot_sweep(summary, "poisson", "nmin", "K", 3200, "poisson_nmin_sweep")
 
 
 if __name__ == "__main__":
