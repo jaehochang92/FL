@@ -1,6 +1,6 @@
 {
-  "scenario": "poisson",
-  "K": 200,
+  "scenario": "quadratic",
+  "K": 800,
   "n_min": 40,
   "n_max": 80,
   "reps": 10,
