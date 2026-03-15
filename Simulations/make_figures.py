@@ -5,6 +5,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.ticker as ticker
+
+from run_all import K_FIXED, NMIN_FIXED
 
 
 ROOT = Path(__file__).resolve().parent
@@ -88,10 +91,50 @@ def plot_sweep(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str,
     ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
     ax.set_ylabel("RMSE", fontsize=11)
     ax.set_title(SCENARIO_TITLES[scenario], fontsize=12, pad=8)
-    ax.legend(frameon=False, fontsize=9, ncol=2, loc="upper right")
+    ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
 
     pdf_path = FIGURE_DIR / f"{output_name}.pdf"
     png_path = FIGURE_DIR / f"{output_name}.png"
+    fig.savefig(pdf_path, bbox_inches="tight")
+    fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str, fixed_value: int, output_name: str) -> None:
+    subset = summary[
+        (summary["scenario"] == scenario) &
+        (summary[fixed_key] == fixed_value)
+    ].sort_values(x_key)
+
+    fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
+    style_axes(ax)
+
+    x_values = subset[x_key].to_numpy()
+    
+    for metric, label, color, marker in ESTIMATORS:
+        means = subset[f"{metric}_mean"].to_numpy()
+        sems = subset[f"{metric}_sem"].to_numpy()
+        ax.plot(
+            x_values,
+            means,
+            color=color,
+            marker=marker,
+            linewidth=2.1,
+            markersize=5.5,
+            label=label,
+        )
+        ax.fill_between(x_values, means - sems, means + sems, color=color, alpha=0.12)
+
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log", base=2)
+    ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.set_xticks(x_values)
+    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
+    ax.set_ylabel("RMSE (Log Scale)", fontsize=11)
+    ax.set_title(SCENARIO_TITLES[scenario] + " (Log-Log)", fontsize=12, pad=8)
+    ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
+
+    pdf_path = FIGURE_DIR / f"{output_name}_loglog.pdf"
+    png_path = FIGURE_DIR / f"{output_name}_loglog.png"
     fig.savefig(pdf_path, bbox_inches="tight")
     fig.savefig(png_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -110,13 +153,12 @@ def main() -> None:
 
     summary = load_summary()
 
-    plot_sweep(summary, "quadratic", "K", "nmin", 50, "quadratic_k_sweep")
-    plot_sweep(summary, "quadratic", "nmin", "K", 200, "quadratic_nmin_sweep")
-    plot_sweep(summary, "logistic", "K", "nmin", 50, "logistic_k_sweep")
-    plot_sweep(summary, "logistic", "nmin", "K", 200, "logistic_nmin_sweep")
-    plot_sweep(summary, "poisson", "K", "nmin", 50, "poisson_k_sweep")
-    plot_sweep(summary, "poisson", "nmin", "K", 200, "poisson_nmin_sweep")
-
+    plot_sweep_loglog(summary, "quadratic", "K", "nmin", NMIN_FIXED, "quadratic_k_sweep")
+    plot_sweep_loglog(summary, "quadratic", "nmin", "K", K_FIXED, "quadratic_nmin_sweep")
+    plot_sweep_loglog(summary, "logistic", "K", "nmin", NMIN_FIXED, "logistic_k_sweep")
+    plot_sweep_loglog(summary, "logistic", "nmin", "K", K_FIXED, "logistic_nmin_sweep")
+    plot_sweep_loglog(summary, "poisson", "K", "nmin", NMIN_FIXED, "poisson_k_sweep")
+    plot_sweep_loglog(summary, "poisson", "nmin", "K", K_FIXED, "poisson_nmin_sweep")
 
 if __name__ == "__main__":
     main()
