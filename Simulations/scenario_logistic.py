@@ -24,7 +24,7 @@ from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
     sample_prior, _clip_spd, _batch_inv,
 )
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
 
 C = 3  # number of classes
 
@@ -158,6 +158,14 @@ def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> tuple:
     fisher_full = empirical_fisher_full(X, theta_hat, projected=projected)
     return theta_hat, fisher_full
 
+def batch_observed_fisher(projected: np.ndarray, atoms: np.ndarray) -> np.ndarray:
+    n = projected.shape[0]
+    logit = np.einsum("ncd,md->mnc", projected, atoms)
+    probs = scipy_softmax(logit, axis=2)
+    term1 = np.einsum("mnc,ncd,nce->mde", probs, projected, projected) / n
+    mu = np.einsum("mnc,ncd->mnd", probs, projected)
+    term2 = np.einsum("mnd,mne->mde", mu, mu) / n
+    return term1 - term2
 
 def population_fisher_full(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
     """Population Fisher Information (full covariance) for multiclass softmax.
@@ -219,6 +227,23 @@ class LogisticScenario(Scenario):
             min_eig=VARIANCE_BOUNDS["s_min"],
             max_eig=VARIANCE_BOUNDS["s_max"],
         )
+    
+    def get_obs_prec_fn(self, data: Dict) -> Callable:
+        X_list = data["X_list"]
+        n_k = data["n_k"]
+        K = len(X_list)
+        # 생성 시점에 미리 projection 해둠 (연산 최적화)
+        proj_list = [_project_features(X) for X in X_list]
+
+        def prec_fn(atoms: np.ndarray) -> np.ndarray:
+            M = atoms.shape[0]
+            prec = np.zeros((K, M, DIM, DIM))
+            for k in range(K):
+                F_1 = batch_observed_fisher(proj_list[k], atoms)
+                # 1개 관측치 피셔에 n_k를 곱해 총 정밀도를 완성
+                prec[k] = _clip_spd(F_1 * n_k[k], min_eig=1e-8, max_eig=1e8)
+            return prec
+        return prec_fn
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         weights = np.asarray(cfg.prior_weights)
@@ -229,13 +254,16 @@ class LogisticScenario(Scenario):
         obs_cov = np.zeros((K, DIM, DIM))
         oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
+        X_list = []
         for i in range(K):
             y, X = generate_multiclass_data(theta_true[i], n_k[i], rng)
+            X_list.append(X)
             theta_hat_i, fisher_full = fit_multiclass_logistic(y, X)
             theta_hat[i] = theta_hat_i
             cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
+            cov_i_scaled = cov_i / n_k[i]  # <--- [핵심 추가] MLE의 올바른 점근적 분산
             obs_cov[i] = _clip_spd(
-                cov_i,
+                cov_i_scaled, 
                 min_eig=VARIANCE_BOUNDS["s_min"] / n_k[i],
                 max_eig=VARIANCE_BOUNDS["s_max"] / n_k[i],
             )
@@ -246,4 +274,5 @@ class LogisticScenario(Scenario):
             "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
+            "X_list": X_list
         }

@@ -189,24 +189,19 @@ def _batch_logdet(mat: np.ndarray, min_eig: float = 1e-12) -> np.ndarray:
 
 
 def vaneb_estimator(
-    x: np.ndarray,
-    n_k: np.ndarray,
-    sigma2_fn: Callable[[np.ndarray], np.ndarray],
+    x: np.ndarray,          # (K, d) MLE
+    obs_var: np.ndarray,    # (K, d, d) client-reported covariance estimates (divided by n_k for proper scaling)
+    prec_tensor_fn: Callable[[np.ndarray], np.ndarray], # atoms (M, d) -> (K, M, d, d) precision tensor for E-step
     em_iters: int,
 ) -> Tuple[np.ndarray, float]:
-    """VANEB: Variance-Adaptive NPEB (proposed).
-
-    Heteroskedastic NPMLE with atom-dependent covariance recomputation.
-    """
-    from sklearn.preprocessing import normalize as sk_normalize
+    """VANEB-MultiRound: Variance-Adaptive NPEB using Exact Observed Fisher."""
     k_obs, d = x.shape
 
     try:
         t0 = time.time()
-        sigma2_init = sigma2_fn(x)                          # (k, d, d)
-        prec_init = n_k[:, None, None] * _batch_inv(sigma2_init)
+        # 초기화는 클라이언트가 최초로 보낸 obs_var의 역행렬을 사용
+        prec_init = _batch_inv(obs_var, min_eig=1e-8, max_eig=1e8)
 
-        # Use GLMixture for initialization (full covariance); subsequent EM is manual
         model = GLMixture(prec_type="general", homoscedastic=False)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             model.fit(x, prec_init, max_iter_em=0,
@@ -217,13 +212,13 @@ def vaneb_estimator(
         weights = model.weights.copy()
 
         for _ in range(em_iters):
-            sigma2_atoms = sigma2_fn(atoms)                 # (m, d, d)
-            sigma2_atoms = _clip_spd(sigma2_atoms, min_eig=1e-8, max_eig=1e8)
-            inv_atoms = _batch_inv(sigma2_atoms, min_eig=1e-8, max_eig=1e8)
+            # Server sends current atoms to clients, clients compute precision tensor 
+            # based on their local obs_var and the received atoms, and send it back. 
+            prec_tensor = prec_tensor_fn(atoms)
+            prec_tensor = _clip_spd(prec_tensor, min_eig=1e-8, max_eig=1e8)
 
             m = atoms.shape[0]
             diffs = x[:, None, :] - atoms[None, :, :]      # (k, m, d)
-            prec_tensor = n_k[:, None, None, None] * inv_atoms[None, :, :, :]  # (k,m,d,d)
 
             mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_tensor, diffs)
             log_det = _batch_logdet(prec_tensor)
@@ -234,7 +229,7 @@ def vaneb_estimator(
             resp = np.exp(log_probs_w)
             resp /= np.maximum(resp.sum(axis=1, keepdims=True), 1e-300)
 
-            # M-step for atom locations with full precision
+            # M-step: update atoms using the precision tensor from clients, weighted by responsibilities
             prec_x = np.einsum('kmde,kd->kme', prec_tensor, x)
             num = np.einsum('km,kme->me', resp, prec_x)                 # (m, d)
             prec_sum = np.einsum('km,kmde->mde', resp, prec_tensor)     # (m, d, d)
@@ -248,11 +243,9 @@ def vaneb_estimator(
             Nk = resp.sum(axis=0)
             weights = Nk / np.maximum(Nk.sum(), 1e-12)
 
-        # Final posterior mean
-        sigma2_final = _clip_spd(sigma2_fn(atoms), min_eig=1e-8, max_eig=1e8)
-        inv_final = _batch_inv(sigma2_final, min_eig=1e-8, max_eig=1e8)
+        # posterior mean with final atoms and precision tensor from clients
+        prec_final = _clip_spd(prec_tensor_fn(atoms), min_eig=1e-8, max_eig=1e8)
         diffs = x[:, None, :] - atoms[None, :, :]
-        prec_final = n_k[:, None, None, None] * inv_final[None, :, :, :]
         mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_final, diffs)
         log_det = _batch_logdet(prec_final)
         log_probs = -0.5 * (mahal + d * np.log(2 * np.pi) - log_det)
@@ -437,9 +430,14 @@ class Scenario(ABC):
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
         """Population covariance function Σ(θ) → (·, 3, 3) SPD matrices."""
 
-    def run_one(
-        self, K: int, rep: int, cfg: SimConfig, rng: np.random.Generator
-    ) -> Dict:
+    @abstractmethod
+    def get_obs_prec_fn(self, data: Dict) -> Callable[[np.ndarray], np.ndarray]:
+        """Return a function that computes observed precision tensors for given atoms.
+        Input to returned fn: atoms (M, d)
+        Output from returned fn: precision tensor (K, M, d, d)
+        """
+
+    def run_one(self, K: int, rep: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         """Run a single replication and return RMSE dict."""
         data = self.generate_data(K, cfg, rng)
         theta_true = data["theta_true"]
@@ -447,15 +445,16 @@ class Scenario(ABC):
         obs_var = data["obs_var"]
         n_k = data["n_k"]
         oracle_obs_var = data.get("oracle_obs_var", obs_var)
-
-        # Oracle — use the same prior_scale applied in generate_data so atoms
-        # are aligned with the actual theta_true support.
+        
         atoms = generate_prior_atoms(atoms_per_curve=200) * self.prior_scale
         theta_oracle = oracle_estimator(x, atoms, oracle_obs_var)
 
-        # VANEB (proposed)
+        # 다형성을 이용해 현재 시나리오에 맞는 관측 피셔 콜백 함수를 받아옴
+        prec_tensor_fn = self.get_obs_prec_fn(data)
+        
+        # VANEB (동적 정밀도 업데이트)
         theta_vaneb, vaneb_time = vaneb_estimator(
-            x, n_k, self.variance_fn, cfg.em_iters
+            x=x, obs_var=obs_var, prec_tensor_fn=prec_tensor_fn, em_iters=cfg.em_iters
         )
 
         # NPEB (Soloff — uses local obs_var, fixed)

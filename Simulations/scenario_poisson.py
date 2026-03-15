@@ -19,7 +19,7 @@ from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
     sample_prior, _clip_spd, _batch_inv,
 )
-from typing import Dict
+from typing import Dict, Callable
 
 FEATURE_SCALE = 1  # σ_x
 
@@ -58,8 +58,8 @@ def generate_poisson_data(
     n: int,
     rng: np.random.Generator,
 ) -> tuple:
-    """Generate Poisson regression data.
-
+    """
+    Generate Poisson regression data.
     Returns (y, X): y (n,) counts, X (n, d) features.
     """
     d = DIM
@@ -85,10 +85,28 @@ def fit_poisson_regression(y: np.ndarray, X: np.ndarray) -> tuple:
     fisher_full = _clip_spd(fisher_full, min_eig=1e-6, max_eig=1e6)
     return theta_hat, fisher_full
 
+def batch_poisson_fisher(X: np.ndarray, atoms: np.ndarray) -> np.ndarray:
+    # X: (n, d), atoms: (M, d)
+    eta = np.clip(np.einsum("md,nd->mn", atoms, X), -10, 10)
+    mu = np.exp(eta)  # W = diag(mu)
+    F = np.einsum("nd,mn,ne->mde", X, mu, X)
+    return F
 
 class PoissonScenario(Scenario):
     name = "poisson"
     prior_scale = PRIOR_SCALE
+
+    def get_obs_prec_fn(self, data: Dict) -> Callable:
+        X_list = data["X_list"]
+        def prec_fn(atoms: np.ndarray) -> np.ndarray:
+            K = len(X_list)
+            M = atoms.shape[0]
+            prec = np.zeros((K, M, DIM, DIM))
+            for k in range(K):
+                F_total = batch_poisson_fisher(X_list[k], atoms)
+                prec[k] = _clip_spd(F_total, min_eig=1e-8, max_eig=1e8)
+            return prec
+        return prec_fn
 
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
         fisher = _population_fisher_full(theta)
@@ -108,8 +126,10 @@ class PoissonScenario(Scenario):
         obs_cov = np.zeros((K, DIM, DIM))
         oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
+        X_list = []
         for i in range(K):
             y, X = generate_poisson_data(theta_true[i], n_k[i], rng)
+            X_list.append(X)
             th, fisher_full = fit_poisson_regression(y, X)
             theta_hat[i] = th
             cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
@@ -125,4 +145,5 @@ class PoissonScenario(Scenario):
             "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
+            "X_list": X_list
         }

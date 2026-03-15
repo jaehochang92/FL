@@ -13,13 +13,22 @@ VANEB uses the known variance function; NPEB uses local sample variances.
 import numpy as np
 from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
-    sample_prior, _clip_spd,
+    sample_prior, _clip_spd, _batch_inv
 )
-from typing import Dict
+from typing import Dict, Callable
 
 
 class QuadraticMeanScenario(Scenario):
     name = "quadratic"
+
+    def get_obs_prec_fn(self, data: Dict) -> Callable:
+        n_k = data["n_k"]
+        def prec_fn(atoms: np.ndarray) -> np.ndarray:
+            pop_var = self.variance_fn(atoms)  # (M, d, d)
+            pop_prec = _batch_inv(pop_var, min_eig=1e-8, max_eig=1e8)
+            # K명의 클라이언트에 맞게 차원 확장 후 n_k 스케일링
+            return n_k[:, None, None, None] * pop_prec[None, :, :, :]
+        return prec_fn
 
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
         diag = np.clip(
