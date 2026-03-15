@@ -1,0 +1,9 @@
+{
+  "scenario": "quadratic",
+  "K": 50,
+  "n_min": 50,
+  "n_max": 100,
+  "reps": 2,
+  "em_iters": 25,
+  "seed": 20260311
+}
