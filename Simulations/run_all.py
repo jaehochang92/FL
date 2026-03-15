@@ -3,8 +3,8 @@
 Unified simulation runner for all three scenarios.
 
 Sweep design (for each scenario):
-    n_min sweep:  n_min ∈ {50, 200, 800},  K = 800 fixed
-    K sweep:      K ∈ {50, 200, 800},       n_min = 800 fixed
+    n_min sweep:  n_min ∈ {50, 100, 200, 400, 800},  K = 200 fixed
+    K sweep:      K ∈ {50, 100, 200, 400, 800},      n_min = 50 fixed
 
 Usage:
     python Simulations/run_all.py                     # all scenarios, full sweep
@@ -36,31 +36,31 @@ SCENARIOS = {
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# Sweep configurations
-NMIN_SWEEP = [100, 200, 400, 800, 1600, 3200]       # vary n_min, fix K = 800
-K_SWEEP = NMIN_SWEEP.copy()      # vary K, fix n_min = 800
-K_FIXED = 3200
-NMIN_FIXED = 100
-REPS = 20
+# Sweep configurations (paper-aligned)
+NMIN_SWEEP = [50, 100, 200, 400, 800]       # vary n_min, fix K = 200
+K_SWEEP = [50, 100, 200, 400, 800]          # vary K, fix n_min = 50
+K_FIXED = 200
+NMIN_FIXED = 50
+REPS = 100
 
 
 def build_configs(smoke: bool = False):
     """Build list of (scenario_name, SimConfig) tuples for the full sweep."""
     configs = []
-    reps = 3 if smoke else REPS
+    reps = 10 if smoke else REPS
 
     for sc_name in SCENARIOS:
         # n_min sweep (K fixed)
         for nmin in (NMIN_SWEEP[:1] if smoke else NMIN_SWEEP):
-            K = 20 if smoke else K_FIXED
+            K = 50 if smoke else K_FIXED
             configs.append((sc_name, SimConfig(
-                K=K, reps=reps, n_min=nmin, n_max=3 * nmin,
+                K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
             )))
         # K sweep (n_min fixed)
         for K in (K_SWEEP[:1] if smoke else K_SWEEP):
             nmin = 50 if smoke else NMIN_FIXED
             configs.append((sc_name, SimConfig(
-                K=K, reps=reps, n_min=nmin, n_max=3 * nmin,
+                K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
             )))
 
     return configs

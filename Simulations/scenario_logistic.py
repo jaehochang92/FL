@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scenario (ii): Multiclass logistic regression with softmax (C = 6 classes).
+Scenario (ii): Multiclass logistic regression with softmax (C = 3 classes).
 
 Model:
     θ^(k) ∈ R^3 — 3-d parameter (shared across classes via feature projection)
@@ -16,15 +16,17 @@ Model:
 """
 
 import numpy as np
+import warnings
 from scipy.special import softmax as scipy_softmax
 from scipy.optimize import minimize
+from sklearn.linear_model import LogisticRegression
 from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
-    sample_prior,
+    sample_prior, _clip_spd, _batch_inv,
 )
 from typing import Dict, Optional
 
-C = 6  # number of classes
+C = 3  # number of classes
 
 # Fixed class embeddings β_c ∈ R^C used to map θ ∈ R^3 into C logits.
 # Logit_c(x) = (β_c^T @ θ) * (x^T @ e_c_proj)
@@ -34,13 +36,12 @@ C = 6  # number of classes
 # Even simpler: logit_c(x) = (B_c x)^T θ, B_c ∈ R^{d x d}.
 # We fix B_c as random orthogonal-ish matrices seeded deterministically.
 
-_rng_class = np.random.RandomState(42)
-CLASS_PROJECTIONS = []
-for _ in range(C):
-    M = _rng_class.randn(DIM, DIM)
-    U, _, Vt = np.linalg.svd(M, full_matrices=False)
-    CLASS_PROJECTIONS.append(U @ Vt)  # orthogonal matrix
-CLASS_PROJECTIONS = np.array(CLASS_PROJECTIONS)  # (C, d, d)
+# B1 = diag(1, -1, 0), B2 = diag(0, 1, -1), B3 = diag(-1, 0, 1)
+CLASS_PROJECTIONS = np.array([
+    np.diag([1.0, -1.0, 0.0]),
+    np.diag([0.0, 1.0, -1.0]),
+    np.diag([-1.0, 0.0, 1.0])
+])
 CLASS_PROJECTIONS_T = np.transpose(CLASS_PROJECTIONS, (0, 2, 1))
 
 # Cache for Monte Carlo Fisher approximation keyed by n_mc.
@@ -85,22 +86,11 @@ def _probs(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
     return scipy_softmax(logit, axis=1)
 
 
-def generate_multiclass_data(
-    theta_true: np.ndarray,
-    n: int,
-    rng: np.random.Generator,
-) -> tuple:
-    """Generate multiclass classification data.
-
-    Returns:
-        (y, X): y (n,) integer labels in {0,...,C-1}, X (n, d) features
-    """
+def generate_multiclass_data(theta_true: np.ndarray, n: int, rng: np.random.Generator) -> tuple:
     d = DIM
     X = rng.standard_normal(size=(n, d))
     probs = _probs(X, theta_true)  # (n, C)
-    # Vectorized categorical sampling per row.
-    u = rng.random(n)[:, None]
-    y = np.argmax(u <= np.cumsum(probs, axis=1), axis=1)
+    y = np.array([rng.choice(C, p=p) for p in probs]) 
     return y, X
 
 
@@ -109,10 +99,32 @@ def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> tuple:
 
     Returns:
         theta_hat: (d,)
-        fisher_diag: (d,) empirical Fisher at theta_hat
+        fisher_full: (d, d) empirical Fisher at theta_hat
     """
     n = X.shape[0]
     projected = _project_features(X)  # (n, C, d)
+
+    # Fast initialization using sklearn; final estimate is still from the exact
+    # constrained objective below.
+    theta0 = np.zeros(DIM)
+    try:
+        X_fast = np.mean(projected, axis=1)  # (n, d)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            clf = LogisticRegression(
+                solver="lbfgs",
+                fit_intercept=False,
+                max_iter=60,
+                tol=1e-4,
+            )
+            clf.fit(X_fast, y)
+        A = CLASS_PROJECTIONS_T.reshape(C * DIM, DIM)
+        b = clf.coef_.reshape(C * DIM)
+        theta0, *_ = np.linalg.lstsq(A, b, rcond=None)
+        theta0 = np.clip(theta0, -5.0, 5.0)
+    except Exception:
+        theta0 = np.zeros(DIM)
+
     y_onehot = np.eye(C)[y]
 
     def neg_log_lik_and_grad(theta):
@@ -137,80 +149,76 @@ def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> tuple:
 
     result = minimize(
         obj,
-        x0=np.zeros(DIM),
+        x0=theta0,
         jac=jac,
         method="L-BFGS-B",
-        options={"maxiter": 120, "gtol": 1e-6},
+        options={"maxiter": 80, "gtol": 1e-6},
     )
     theta_hat = result.x
-    fisher_diag = empirical_fisher_diag(X, theta_hat, projected=projected)
-    return theta_hat, fisher_diag
+    fisher_full = empirical_fisher_full(X, theta_hat, projected=projected)
+    return theta_hat, fisher_full
 
 
-def population_fisher_diag(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
-    """Population Fisher Information diagonal for the multiclass softmax model.
+def population_fisher_full(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
+    """Population Fisher Information (full covariance) for multiclass softmax.
 
-    I(θ)_{jj} = E_X[ Σ_c p_c(X,θ)(1-p_c(X,θ)) * (B_c X)_j^2 ]
-
-    Uses Monte Carlo integration over X ~ N(0, I).
-
-    Args:
-        theta: (d,) or (m, d)
-    Returns:
-        (d,) or (m, d) Fisher diagonal
+    Fisher(θ) = E_X[ Σ_c p_c f_c f_c^T - (Σ_c p_c f_c)(Σ_c p_c f_c)^T ],
+    where f_c = B_c X and X ~ N(0, I).
     """
     single = (theta.ndim == 1)
     if single:
         theta = theta[None, :]
     m, d = theta.shape
-    proj_mc, proj_mc_sq = _get_mc_cache(n_mc)  # (n_mc, C, d)
+    proj_mc, _ = _get_mc_cache(n_mc)  # (n_mc, C, d)
 
-    fisher = np.zeros((m, d))
-    batch_size = 256
+    fisher = np.zeros((m, d, d))
+    batch_size = 128
     for start in range(0, m, batch_size):
         end = min(start + batch_size, m)
         theta_b = theta[start:end]  # (b, d)
 
-        # logits: (b, n_mc, C)
-        logits_b = np.einsum("ncd,bd->bnc", proj_mc, theta_b)
+        logits_b = np.einsum("ncd,bd->bnc", proj_mc, theta_b)   # (b,n_mc,C)
         probs_b = scipy_softmax(logits_b, axis=2)
-        w_b = probs_b * (1.0 - probs_b)
+        term1 = np.einsum("bnc,ncd,nce->bnde", probs_b, proj_mc, proj_mc)
+        mu = np.einsum("bnc,ncd->bnd", probs_b, proj_mc)
+        term2 = np.einsum("bnd,bne->bnde", mu, mu)
+        fisher[start:end] = np.mean(term1 - term2, axis=1)
 
-        # (b, d): average over n_mc and sum over C
-        fisher_b = np.einsum("bnc,ncd->bd", w_b, proj_mc_sq) / n_mc
-        fisher[start:end] = fisher_b
-
-    fisher = np.maximum(fisher, 1e-6)
+    fisher = _clip_spd(fisher, min_eig=1e-6, max_eig=1e6)
     if single:
         return fisher[0]
     return fisher
 
 
-def empirical_fisher_diag(
+def empirical_fisher_full(
     X: np.ndarray,
     theta: np.ndarray,
     projected: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Empirical Fisher diagonal at theta using data X.
-
-    Returns (d,) diagonal of X^T diag(w) X summed over classes.
-    """
+    """Empirical Fisher (full) at theta using observed data X."""
     if projected is None:
         projected = _project_features(X)
+    n = X.shape[0]
     logit = np.einsum("ncd,d->nc", projected, theta)
     probs = scipy_softmax(logit, axis=1)
-    w = probs * (1.0 - probs)
-    fisher = np.einsum("nc,ncd->d", w, projected ** 2)
-    return np.maximum(fisher, 1e-6)
+    term1 = np.einsum("nc,ncd,nce->de", probs, projected, projected) / n
+    mu = np.einsum("nc,ncd->nd", probs, projected)
+    term2 = np.einsum("nd,ne->de", mu, mu) / n
+    fisher = term1 - term2
+    return _clip_spd(fisher, min_eig=1e-6, max_eig=1e6)
 
 
 class LogisticScenario(Scenario):
     name = "logistic"
 
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
-        """Population variance = 1 / Fisher diagonal, clipped."""
-        fisher = population_fisher_diag(theta)
-        return np.clip(1.0 / fisher, VARIANCE_BOUNDS["s_min"], VARIANCE_BOUNDS["s_max"])
+        fisher = population_fisher_full(theta)
+        cov = _batch_inv(fisher, min_eig=1e-6, max_eig=1e6)
+        return _clip_spd(
+            cov,
+            min_eig=VARIANCE_BOUNDS["s_min"],
+            max_eig=VARIANCE_BOUNDS["s_max"],
+        )
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         weights = np.asarray(cfg.prior_weights)
@@ -218,20 +226,24 @@ class LogisticScenario(Scenario):
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
 
         theta_hat = np.zeros((K, DIM))
-        obs_var = np.zeros((K, DIM))
-        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None]
+        obs_cov = np.zeros((K, DIM, DIM))
+        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
         for i in range(K):
             y, X = generate_multiclass_data(theta_true[i], n_k[i], rng)
-            theta_hat_i, fisher_diag = fit_multiclass_logistic(y, X)
+            theta_hat_i, fisher_full = fit_multiclass_logistic(y, X)
             theta_hat[i] = theta_hat_i
-            # Local Fisher-based variance estimate
-            obs_var[i] = 1.0 / np.maximum(fisher_diag, 1e-6)
+            cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
+            obs_cov[i] = _clip_spd(
+                cov_i,
+                min_eig=VARIANCE_BOUNDS["s_min"] / n_k[i],
+                max_eig=VARIANCE_BOUNDS["s_max"] / n_k[i],
+            )
 
         return {
             "theta_true": theta_true,
             "x": theta_hat,
-            "obs_var": obs_var,
+            "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
         }

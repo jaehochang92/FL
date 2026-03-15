@@ -17,11 +17,11 @@ import numpy as np
 import statsmodels.api as sm
 from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
-    sample_prior,
+    sample_prior, _clip_spd, _batch_inv,
 )
 from typing import Dict
 
-FEATURE_SCALE = 0.7  # σ_x
+FEATURE_SCALE = 1  # σ_x
 
 # The Poisson exp link makes Fisher information grow as exp(σ²‖θ‖²/2).  With
 # the shared prior curves the trefoil knot reaches ‖θ‖≈4.9, giving a per-obs
@@ -29,26 +29,25 @@ FEATURE_SCALE = 0.7  # σ_x
 # increases, NPMLE is dominated by those clients and RMSE grows instead of
 # shrinking.  Scaling θ down by 0.5 brings max Fisher to ~8, keeping all five
 # curves in the same order of magnitude and obs_var within VARIANCE_BOUNDS.
-PRIOR_SCALE = 0.5  # applied to sample_prior output in generate_data
+PRIOR_SCALE = .9  # applied to sample_prior output in generate_data
 
 
-def _population_fisher_diag(theta: np.ndarray) -> np.ndarray:
-    """Closed-form population Fisher diagonal for Poisson regression.
+def _population_fisher_full(theta: np.ndarray) -> np.ndarray:
+    """Closed-form population Fisher (full covariance) for Poisson regression.
 
-    F_j(θ) = (σ² + σ⁴ θ_j²) exp(σ² ||θ||² / 2)
-
-    Args:
-        theta: (d,) or (m, d)
-    Returns:
-        same shape as theta
+    For X ~ N(0, σ² I):
+        F(θ) = exp(σ² ||θ||² / 2) [ σ² I + σ⁴ θ θ^T ].
     """
     sx2 = FEATURE_SCALE ** 2
     single = (theta.ndim == 1)
     if single:
         theta = theta[None, :]
-    norm_sq = np.sum(theta ** 2, axis=1, keepdims=True)
-    fisher = (sx2 + sx2 ** 2 * theta ** 2) * np.exp(sx2 * norm_sq / 2)
-    fisher = np.clip(fisher, 1e-4, 1e6)
+    norm_sq = np.sum(theta ** 2, axis=1)
+    scale = np.exp(sx2 * norm_sq / 2.0)[..., None, None]
+    outer = np.einsum("...i,...j->...ij", theta, theta)
+    eye = np.eye(DIM)
+    fisher = scale * (sx2 * eye + (sx2 ** 2) * outer)
+    fisher = _clip_spd(fisher, min_eig=1e-4, max_eig=1e6)
     if single:
         return fisher[0]
     return fisher
@@ -74,7 +73,7 @@ def generate_poisson_data(
 def fit_poisson_regression(y: np.ndarray, X: np.ndarray) -> tuple:
     """Fit Poisson GLM via IRLS.
 
-    Returns (theta_hat, fisher_diag): MLE and empirical Fisher diagonal.
+    Returns (theta_hat, fisher_full): MLE and empirical Fisher (full).
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -82,8 +81,9 @@ def fit_poisson_regression(y: np.ndarray, X: np.ndarray) -> tuple:
         result = glm.fit(maxiter=200, tol=1e-12, disp=0)
     theta_hat = np.asarray(result.params)
     mu = np.asarray(result.fittedvalues)
-    fisher_diag = np.sum(mu[:, None] * X ** 2, axis=0)
-    return theta_hat, np.maximum(fisher_diag, 1e-6)
+    fisher_full = X.T @ (mu[:, None] * X)
+    fisher_full = _clip_spd(fisher_full, min_eig=1e-6, max_eig=1e6)
+    return theta_hat, fisher_full
 
 
 class PoissonScenario(Scenario):
@@ -91,9 +91,13 @@ class PoissonScenario(Scenario):
     prior_scale = PRIOR_SCALE
 
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
-        """Population variance = 1 / Fisher diagonal, clipped."""
-        fisher = _population_fisher_diag(theta)
-        return np.clip(1.0 / fisher, VARIANCE_BOUNDS["s_min"], VARIANCE_BOUNDS["s_max"])
+        fisher = _population_fisher_full(theta)
+        cov = _batch_inv(fisher, min_eig=1e-6, max_eig=1e6)
+        return _clip_spd(
+            cov,
+            min_eig=VARIANCE_BOUNDS["s_min"],
+            max_eig=VARIANCE_BOUNDS["s_max"],
+        )
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         weights = np.asarray(cfg.prior_weights)
@@ -101,26 +105,24 @@ class PoissonScenario(Scenario):
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
 
         theta_hat = np.zeros((K, DIM))
-        obs_var = np.zeros((K, DIM))
-        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None]
+        obs_cov = np.zeros((K, DIM, DIM))
+        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
         for i in range(K):
             y, X = generate_poisson_data(theta_true[i], n_k[i], rng)
-            th, fisher_diag = fit_poisson_regression(y, X)
+            th, fisher_full = fit_poisson_regression(y, X)
             theta_hat[i] = th
-            # Clip obs_var to VARIANCE_BOUNDS / n_k so it stays consistent
-            # with oracle_obs_var and VANEB's variance_fn bounds.
-            raw_var = 1.0 / np.maximum(fisher_diag, 1e-6)
-            obs_var[i] = np.clip(
-                raw_var,
-                VARIANCE_BOUNDS["s_min"] / n_k[i],
-                VARIANCE_BOUNDS["s_max"] / n_k[i],
+            cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
+            obs_cov[i] = _clip_spd(
+                cov_i,
+                min_eig=VARIANCE_BOUNDS["s_min"] / n_k[i],
+                max_eig=VARIANCE_BOUNDS["s_max"] / n_k[i],
             )
 
         return {
             "theta_true": theta_true,
             "x": theta_hat,
-            "obs_var": obs_var,
+            "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
         }

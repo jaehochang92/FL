@@ -19,12 +19,17 @@ All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and r
 
 ## Sweep Design
 
-For each scenario, `run_all.py` executes two sweeps:
+For each scenario, `run_all.py` executes two sweeps (paper-aligned):
 
-- $n_{\min} \in \{50, 200, 800\}$ with $K = 800$ fixed
-- $K \in \{50, 200, 800\}$ with $n_{\min} = 800$ fixed
+- $n_{\min} \in \{50, 100, 200, 400, 800\}$ with $K = 200$ fixed
+- $K \in \{50, 100, 200, 400, 800\}$ with $n_{\min} = 50$ fixed
 
-The default run uses 50 replicates per configuration.
+The default run uses 100 replicates per configuration and sets client sizes as
+$n_k \sim \mathrm{Unif}(n_{\min}, 2 n_{\min})$.
+
+All estimators now operate with full covariance matrices (no diagonal mode):
+VANEB recomputes atom covariances each EM iteration, while the baselines use
+fixed client-provided covariances.
 
 ## Quick Start
 

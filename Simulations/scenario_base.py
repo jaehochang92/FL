@@ -13,6 +13,10 @@ Estimators (all scenarios share the same four):
     NPEB    — Soloff et al. homoscedastic NPMLE (local sample-variance estimate)
     AdaMix  — Ozkara et al. parametric Gaussian mixture + MAP
     Oracle  — Oracle Bayes with known prior and variance function
+
+All covariance handling is now full-matrix (no enforced diagonal mode). VANEB
+recomputes atom-dependent covariances each EM iteration; baselines use the
+client-provided fixed covariance estimates.
 """
 
 from __future__ import annotations
@@ -47,10 +51,10 @@ VARIANCE_BOUNDS = {"s_min": 0.01, "s_max": 100.0}
 @dataclass
 class SimConfig:
     """Shared configuration across all scenarios."""
-    K: int = 800
-    reps: int = 50
-    n_min: int = 200
-    n_max: int = 600          # will be set to 3 * n_min by default
+    K: int = 200
+    reps: int = 100
+    n_min: int = 50
+    n_max: int = 100          # typically set to 2 * n_min by the runner
     em_iters: int = 25
     adamix_components: int = 5
     adamix_iters: int = 20
@@ -149,6 +153,36 @@ def _sanitize(theta: np.ndarray, clip: float = 1e6) -> np.ndarray:
     return np.clip(out, -clip, clip)
 
 
+def _symmetrize(mat: np.ndarray) -> np.ndarray:
+    return 0.5 * (mat + np.swapaxes(mat, -1, -2))
+
+
+def _clip_spd(mat: np.ndarray, min_eig: float = 1e-6, max_eig: float = 1e6) -> np.ndarray:
+    """Project symmetric matrix/matrices to SPD with eigenvalue clipping."""
+    mat = _symmetrize(mat)
+    vals, vecs = np.linalg.eigh(mat)
+    vals_clipped = np.clip(vals, min_eig, max_eig)
+    clipped = (vecs * vals_clipped[..., None, :]) @ np.swapaxes(vecs, -1, -2)
+    return _symmetrize(clipped)
+
+
+def _batch_inv(mat: np.ndarray, min_eig: float = 1e-6, max_eig: float = 1e6) -> np.ndarray:
+    """Inverse of SPD matrices with eigen clipping for stability."""
+    mat_pd = _clip_spd(mat, min_eig=min_eig, max_eig=max_eig)
+    vals, vecs = np.linalg.eigh(mat_pd)
+    vals_inv = 1.0 / np.clip(vals, min_eig, max_eig)
+    inv = (vecs * vals_inv[..., None, :]) @ np.swapaxes(vecs, -1, -2)
+    return _symmetrize(inv)
+
+
+def _batch_logdet(mat: np.ndarray, min_eig: float = 1e-12) -> np.ndarray:
+    """Log-determinant of SPD matrices with eigen clipping to avoid -inf."""
+    mat_pd = _clip_spd(mat, min_eig=min_eig)
+    vals = np.linalg.eigvalsh(mat_pd)
+    vals = np.clip(vals, min_eig, None)
+    return np.sum(np.log(vals), axis=-1)
+
+
 # ============================================================================
 # Estimators
 # ============================================================================
@@ -169,10 +203,11 @@ def vaneb_estimator(
 
     try:
         t0 = time.time()
-        sigma2_init = sigma2_fn(x)
-        prec_init = n_k[:, None] / np.maximum(sigma2_init, 1e-12)
+        sigma2_init = sigma2_fn(x)                          # (k, d, d)
+        prec_init = n_k[:, None, None] * _batch_inv(sigma2_init)
 
-        model = GLMixture(prec_type="diagonal", homoscedastic=False)
+        # Use GLMixture for initialization (full covariance); subsequent EM is manual
+        model = GLMixture(prec_type="general", homoscedastic=False)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             model.fit(x, prec_init, max_iter_em=0,
                       weight_thresh=0.0, solver="mosek",
@@ -182,12 +217,16 @@ def vaneb_estimator(
         weights = model.weights.copy()
 
         for _ in range(em_iters):
-            sigma2_atoms = np.maximum(sigma2_fn(atoms), 1e-12)
+            sigma2_atoms = sigma2_fn(atoms)                 # (m, d, d)
+            sigma2_atoms = _clip_spd(sigma2_atoms, min_eig=1e-8, max_eig=1e8)
+            inv_atoms = _batch_inv(sigma2_atoms, min_eig=1e-8, max_eig=1e8)
+
             m = atoms.shape[0]
-            diffs = x[:, None, :] - atoms[None, :, :]
-            prec_tensor = n_k[:, None, None] / sigma2_atoms[None, :, :]
-            mahal = np.sum(prec_tensor * diffs ** 2, axis=2)
-            log_det = np.sum(np.log(prec_tensor), axis=2)
+            diffs = x[:, None, :] - atoms[None, :, :]      # (k, m, d)
+            prec_tensor = n_k[:, None, None, None] * inv_atoms[None, :, :, :]  # (k,m,d,d)
+
+            mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_tensor, diffs)
+            log_det = _batch_logdet(prec_tensor)
             log_probs = -0.5 * (mahal + d * np.log(2 * np.pi) - log_det)
 
             log_probs_w = log_probs + np.log(np.maximum(weights, 1e-300))[None, :]
@@ -195,20 +234,27 @@ def vaneb_estimator(
             resp = np.exp(log_probs_w)
             resp /= np.maximum(resp.sum(axis=1, keepdims=True), 1e-300)
 
-            precX = prec_tensor * x[:, None, :]
-            num = np.einsum('km,kmd->md', resp, precX)
-            dnm = np.einsum('km,kmd->md', resp, prec_tensor)
-            atoms = num / np.maximum(dnm, 1e-12)
+            # M-step for atom locations with full precision
+            prec_x = np.einsum('kmde,kd->kme', prec_tensor, x)
+            num = np.einsum('km,kme->me', resp, prec_x)                 # (m, d)
+            prec_sum = np.einsum('km,kmde->mde', resp, prec_tensor)     # (m, d, d)
+            prec_sum = _clip_spd(prec_sum, min_eig=1e-8, max_eig=1e8)
+
+            new_atoms = np.zeros_like(atoms)
+            for j in range(m):
+                new_atoms[j] = np.linalg.solve(prec_sum[j], num[j])
+            atoms = new_atoms
 
             Nk = resp.sum(axis=0)
             weights = Nk / np.maximum(Nk.sum(), 1e-12)
 
         # Final posterior mean
-        sigma2_final = np.maximum(sigma2_fn(atoms), 1e-12)
+        sigma2_final = _clip_spd(sigma2_fn(atoms), min_eig=1e-8, max_eig=1e8)
+        inv_final = _batch_inv(sigma2_final, min_eig=1e-8, max_eig=1e8)
         diffs = x[:, None, :] - atoms[None, :, :]
-        prec_final = n_k[:, None, None] / sigma2_final[None, :, :]
-        mahal = np.sum(prec_final * diffs ** 2, axis=2)
-        log_det = np.sum(np.log(prec_final), axis=2)
+        prec_final = n_k[:, None, None, None] * inv_final[None, :, :, :]
+        mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_final, diffs)
+        log_det = _batch_logdet(prec_final)
         log_probs = -0.5 * (mahal + d * np.log(2 * np.pi) - log_det)
         log_probs_w = log_probs + np.log(np.maximum(weights, 1e-300))[None, :]
         log_probs_w -= log_probs_w.max(axis=1, keepdims=True)
@@ -229,13 +275,13 @@ def npeb_estimator(
 ) -> Tuple[np.ndarray, float]:
     """NPEB: Soloff et al. homoscedastic NPMLE with local sample-variance estimates.
 
-    Uses client-reported variance estimates (fixed, not recomputed at atoms).
+    Uses client-reported covariance estimates (fixed, not recomputed at atoms).
     """
-    prec_fixed = 1.0 / np.maximum(obs_var, 1e-12)
+    prec_fixed = _batch_inv(obs_var, min_eig=1e-8, max_eig=1e8)
 
     try:
         t0 = time.time()
-        model = GLMixture(prec_type="diagonal", homoscedastic=False)
+        model = GLMixture(prec_type="general", homoscedastic=False)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             model.fit(x, prec_fixed, max_iter_em=em_iters,
                       weight_thresh=1e-4, solver="mosek",
@@ -261,7 +307,9 @@ def adamix_estimator(
 
     for _ in range(cfg.adamix_iters):
         resp, var = _gmm_resp_and_scales(theta, gmm)
-        inv_obs = 1.0 / np.maximum(obs_var, 1e-12)
+        # Use diagonal of the provided covariance for a lightweight MAP update.
+        obs_var_diag = np.diagonal(obs_var, axis1=1, axis2=2)
+        inv_obs = 1.0 / np.maximum(obs_var_diag, 1e-12)
         prior_prec = np.zeros((k, 1))
         prior_loc = np.zeros_like(theta)
         for ell in range(gmm.n_components):
@@ -288,11 +336,13 @@ def oracle_estimator(
     observation variance for each replicated client summary statistic.
     """
     _, d = x.shape
-    obs_var_safe = np.maximum(obs_var[:, None, :], 1e-12)
+    atoms = np.asarray(atoms)
+    obs_var = _clip_spd(obs_var, min_eig=1e-10, max_eig=1e10)
+    inv_cov = _batch_inv(obs_var, min_eig=1e-10, max_eig=1e10)
     diff = x[:, None, :] - atoms[None, :, :]
-    quad = np.sum(diff ** 2 / obs_var_safe, axis=2)
-    log_det = np.sum(np.log(2 * np.pi * obs_var_safe), axis=2)
-    log_w = -0.5 * (quad + log_det)
+    mahal = np.einsum('kmd,kde,kme->km', diff, inv_cov, diff)
+    log_det = _batch_logdet(obs_var[:, None, :, :], min_eig=1e-10)
+    log_w = -0.5 * (mahal + log_det + d * np.log(2 * np.pi))
     log_norm = logsumexp(log_w, axis=1, keepdims=True)
     w = np.exp(log_w - log_norm)
     w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
@@ -378,14 +428,14 @@ class Scenario(ABC):
         Returns a dict with at least:
             theta_true: (K, 3) true parameters
             x:          (K, 3) summary statistics (the "observations")
-            obs_var:    (K, 3) client-specific observation variances
+                obs_var:    (K, 3, 3) client-specific observation covariance
             n_k:        (K,)   sample sizes
         Subclasses may store extra fields (e.g. X_list, y_list for GLMs).
         """
 
     @abstractmethod
     def variance_fn(self, theta: np.ndarray) -> np.ndarray:
-        """Population variance function σ²(θ) → (·, 3) diagonal variances."""
+        """Population covariance function Σ(θ) → (·, 3, 3) SPD matrices."""
 
     def run_one(
         self, K: int, rep: int, cfg: SimConfig, rng: np.random.Generator
