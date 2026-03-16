@@ -37,11 +37,11 @@ SCENARIOS = {
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Sweep configurations (paper-aligned)
-NMIN_SWEEP = [50, 100, 200, 400, 800]       # vary n_min, fix K = 200
+NMIN_SWEEP = [20, 40, 80, 160, 320]       # vary n_min, fix K = 200
 K_SWEEP = [50, 100, 200, 400, 800]          # vary K, fix n_min = 50
 K_FIXED = K_SWEEP[2]
 NMIN_FIXED = NMIN_SWEEP[2]
-REPS = 10
+REPS = 100
 
 
 def build_configs(smoke: bool = False):

@@ -1,5 +1,5 @@
 {
-  "scenario": "logistic",
+  "scenario": "quadratic",
   "K": 200,
   "n_min": 80,
   "n_max": 160,

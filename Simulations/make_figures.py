@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.ticker as ticker
+import numpy as np  # 방어적 프로그래밍을 위해 numpy 추가
 
 from run_all import K_FIXED, NMIN_FIXED
 
@@ -39,7 +40,11 @@ def load_summary() -> pd.DataFrame:
         k_value = int(k_token[1:])
         nmin_value = int(nmin_token.replace("nmin", ""))
 
-        metrics = pd.read_csv(run_dir / "metrics.csv")
+        metrics_file = run_dir / "metrics.csv"
+        if not metrics_file.exists():
+            continue
+
+        metrics = pd.read_csv(metrics_file)
         row = {
             "scenario": scenario,
             "K": k_value,
@@ -51,6 +56,8 @@ def load_summary() -> pd.DataFrame:
             row[f"{metric}_sem"] = metrics[metric].std(ddof=1) / (len(metrics) ** 0.5)
         rows.append(row)
 
+    if not rows:
+        return pd.DataFrame()
     return pd.DataFrame(rows).sort_values(["scenario", "K", "nmin"])
 
 
@@ -62,48 +69,20 @@ def style_axes(ax: plt.Axes) -> None:
     ax.tick_params(labelsize=10)
 
 
-def plot_sweep(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str, fixed_value: int, output_name: str) -> None:
-    subset = summary[
-        (summary["scenario"] == scenario) &
-        (summary[fixed_key] == fixed_value)
-    ].sort_values(x_key)
-
-    fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
-    style_axes(ax)
-
-    x_values = subset[x_key].to_list()
-    x_positions = list(range(len(x_values)))
-    for metric, label, color, marker in ESTIMATORS:
-        means = subset[f"{metric}_mean"].to_numpy()
-        sems = subset[f"{metric}_sem"].to_numpy()
-        ax.plot(
-            x_positions,
-            means,
-            color=color,
-            marker=marker,
-            linewidth=2.1,
-            markersize=5.5,
-            label=label,
-        )
-        ax.fill_between(x_positions, means - sems, means + sems, color=color, alpha=0.12)
-
-    ax.set_xticks(x_positions, [str(value) for value in x_values])
-    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
-    ax.set_ylabel("RMSE", fontsize=11)
-    ax.set_title(SCENARIO_TITLES[scenario], fontsize=12, pad=8)
-    ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
-
-    pdf_path = FIGURE_DIR / f"{output_name}.pdf"
-    png_path = FIGURE_DIR / f"{output_name}.png"
-    fig.savefig(pdf_path, bbox_inches="tight")
-    fig.savefig(png_path, dpi=220, bbox_inches="tight")
-    plt.close(fig)
-
 def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str, fixed_value: int, output_name: str) -> None:
+    if summary.empty:
+        print(f"  [Skip] No data loaded yet. Cannot plot {output_name}.")
+        return
+
     subset = summary[
         (summary["scenario"] == scenario) &
         (summary[fixed_key] == fixed_value)
     ].sort_values(x_key)
+
+    # 안전장치 1: 해당 조건에 맞는 데이터가 아직 시뮬레이션되지 않았으면 스킵!
+    if subset.empty:
+        print(f"  [Skip] No data found for {scenario} where {fixed_key}={fixed_value}. Skipping {output_name}.")
+        return
 
     fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
     style_axes(ax)
@@ -111,8 +90,12 @@ def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_ke
     x_values = subset[x_key].to_numpy()
     
     for metric, label, color, marker in ESTIMATORS:
+        if f"{metric}_mean" not in subset.columns:
+            continue
+            
         means = subset[f"{metric}_mean"].to_numpy()
         sems = subset[f"{metric}_sem"].to_numpy()
+        
         ax.plot(
             x_values,
             means,
@@ -122,10 +105,11 @@ def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_ke
             markersize=5.5,
             label=label,
         )
-        ax.fill_between(x_values, means - sems, means + sems, color=color, alpha=0.12)
+        lower_bound = np.maximum(means - sems, 1e-5)
+        ax.fill_between(x_values, lower_bound, means + sems, color=color, alpha=0.12)
 
     ax.set_xscale("log", base=2)
-    ax.set_yscale("log", base=2)
+    ax.set_yscale("log", base=10)
     ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
     ax.set_xticks(x_values)
     ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
@@ -152,6 +136,10 @@ def main() -> None:
     })
 
     summary = load_summary()
+
+    if summary.empty:
+        print("No simulation outputs found in output directory. Make sure jobs have completed.")
+        return
 
     plot_sweep_loglog(summary, "quadratic", "K", "nmin", NMIN_FIXED, "quadratic_k_sweep")
     plot_sweep_loglog(summary, "quadratic", "nmin", "K", K_FIXED, "quadratic_nmin_sweep")

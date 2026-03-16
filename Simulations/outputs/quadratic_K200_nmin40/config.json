@@ -1,8 +1,8 @@
 {
-  "scenario": "logistic",
+  "scenario": "quadratic",
   "K": 200,
-  "n_min": 80,
-  "n_max": 160,
+  "n_min": 40,
+  "n_max": 80,
   "reps": 100,
   "em_iters": 25,
   "seed": 20260311

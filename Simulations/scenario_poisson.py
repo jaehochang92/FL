@@ -21,7 +21,7 @@ from scenario_base import (
 )
 from typing import Dict, Callable
 
-FEATURE_SCALE = 1  # σ_x
+FEATURE_SCALE = .1  # σ_x
 
 # The Poisson exp link makes Fisher information grow as exp(σ²‖θ‖²/2).  With
 # the shared prior curves the trefoil knot reaches ‖θ‖≈4.9, giving a per-obs
@@ -29,7 +29,7 @@ FEATURE_SCALE = 1  # σ_x
 # increases, NPMLE is dominated by those clients and RMSE grows instead of
 # shrinking.  Scaling θ down by 0.5 brings max Fisher to ~8, keeping all five
 # curves in the same order of magnitude and obs_var within VARIANCE_BOUNDS.
-PRIOR_SCALE = .9  # applied to sample_prior output in generate_data
+PRIOR_SCALE = .7  # applied to sample_prior output in generate_data
 
 
 def _population_fisher_full(theta: np.ndarray) -> np.ndarray:
