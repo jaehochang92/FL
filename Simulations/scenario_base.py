@@ -64,7 +64,7 @@ class SimConfig:
     # figure-8 + Viviani curve) — more complex than three circles.
     prior_n_curves: int = 5
     prior_weights: List[float] = field(
-        default_factory=lambda: [0.2, 0.2, 0.2, 0.2, 0.2]
+        default_factory=lambda: [0.35, 0.35, 0.1, 0.1, 0.1]
     )
 
 

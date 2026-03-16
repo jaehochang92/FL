@@ -132,11 +132,13 @@ def fit_multiclass_logistic(y: np.ndarray, X: np.ndarray) -> tuple:
         max_l = logit.max(axis=1, keepdims=True)
         log_sum_exp = max_l.ravel() + np.log(np.sum(np.exp(logit - max_l), axis=1))
         chosen_logit = logit[np.arange(n), y]
-        nll = -np.mean(chosen_logit - log_sum_exp)
+        l2_reg = 1e-3 * np.sum(theta ** 2) / 2.0
+        nll = -np.mean(chosen_logit - log_sum_exp) + l2_reg
 
         probs = scipy_softmax(logit, axis=1)
         # grad = -E[(y_onehot - p) * feature]
         grad = -np.einsum("nc,ncd->d", (y_onehot - probs), projected) / n
+        grad += 1e-3 * theta
         return nll, grad
 
     def obj(theta):
