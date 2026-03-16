@@ -199,7 +199,6 @@ def vaneb_estimator(
 
     try:
         t0 = time.time()
-        # 초기화는 클라이언트가 최초로 보낸 obs_var의 역행렬을 사용
         prec_init = _batch_inv(obs_var, min_eig=1e-8, max_eig=1e8)
 
         model = GLMixture(prec_type="general", homoscedastic=False)
