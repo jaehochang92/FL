@@ -1,9 +1,0 @@
-{
-  "scenario": "poisson",
-  "K": 200,
-  "n_min": 320,
-  "n_max": 640,
-  "reps": 100,
-  "em_iters": 25,
-  "seed": 20260311
-}

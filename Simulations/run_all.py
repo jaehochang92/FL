@@ -2,10 +2,6 @@
 """
 Unified simulation runner for all three scenarios.
 
-Sweep design (for each scenario):
-    n_min sweep:  n_min ∈ {50, 100, 200, 400, 800},  K = 200 fixed
-    K sweep:      K ∈ {50, 100, 200, 400, 800},      n_min = 50 fixed
-
 Usage:
     python Simulations/run_all.py                     # all scenarios, full sweep
     python Simulations/run_all.py --scenario quadratic --smoke  # quick test
@@ -37,9 +33,9 @@ SCENARIOS = {
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Sweep configurations (paper-aligned)
-NMIN_SWEEP = [10, 20, 40, 80, 160]       # vary n_min, fix K = 200
-K_SWEEP = [50, 100, 200, 400, 800]          # vary K, fix n_min = 40
-K_FIXED = K_SWEEP[2]
+NMIN_SWEEP = [10, 20, 40, 80, 160]
+K_SWEEP = [100, 200, 400, 800, 1600]
+K_FIXED = K_SWEEP[1]
 NMIN_FIXED = NMIN_SWEEP[2]
 REPS = 100
 
