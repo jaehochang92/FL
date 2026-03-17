@@ -26,7 +26,6 @@ class QuadraticMeanScenario(Scenario):
         def prec_fn(atoms: np.ndarray) -> np.ndarray:
             pop_var = self.variance_fn(atoms)  # (M, d, d)
             pop_prec = _batch_inv(pop_var, min_eig=1e-8, max_eig=1e8)
-            # K명의 클라이언트에 맞게 차원 확장 후 n_k 스케일링
             return n_k[:, None, None, None] * pop_prec[None, :, :, :]
         return prec_fn
 
@@ -46,22 +45,30 @@ class QuadraticMeanScenario(Scenario):
 
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
         sigma2 = self.variance_fn(theta_true)              # (K, 3, 3)
-        obs_cov = sigma2 / n_k[:, None, None]              # true obs covariance
-        z = rng.standard_normal(size=(K, DIM))
-        chol = np.linalg.cholesky(obs_cov)
-        x = theta_true + np.einsum("kij,kj->ki", chol, z)
-        
-        # For NPEB (Soloff), clients report local sample-variance estimates.
-        # Simulate: cov_hat_k = obs_cov_k * chi2(n_k-1) / (n_k - 1)
-        df = np.maximum(n_k - 1, 1)
-        chi2_scale = rng.chisquare(df, size=(K,))
-        obs_cov_estimated = obs_cov * (chi2_scale / df)[:, None, None]
+        oracle_obs_cov = sigma2 / n_k[:, None, None]      # Cov(sample mean)
+
+        x = np.zeros((K, DIM))
+        obs_cov_estimated = np.zeros((K, DIM, DIM))
+
+        for k in range(K):
+            std_k = np.sqrt(np.diag(sigma2[k]))
+            local = theta_true[k] + rng.standard_normal(size=(n_k[k], DIM)) * std_k
+            x[k] = local.mean(axis=0)
+
+            if n_k[k] > 1:
+                sample_cov = np.cov(local, rowvar=False, ddof=1)
+            else:
+                sample_cov = np.diag(std_k ** 2)
+
+            # Client-reported covariance of the sample mean estimator.
+            obs_cov_estimated[k] = sample_cov / n_k[k]
+
         obs_cov_estimated = _clip_spd(obs_cov_estimated, min_eig=1e-10, max_eig=1e10)
 
         return {
             "theta_true": theta_true,
             "x": x,
             "obs_var": obs_cov_estimated,  # noisy local covariance for NPEB
-            "oracle_obs_var": obs_cov,
+            "oracle_obs_var": oracle_obs_cov,
             "n_k": n_k,
         }
