@@ -34,7 +34,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Sweep configurations (paper-aligned)
 NMIN_SWEEP = [10, 20, 40, 80, 160]
-K_SWEEP = [100, 200, 400, 800, 1600]
+K_SWEEP = [100, 200, 400, 800, 1600, 3200]
 K_FIXED = K_SWEEP[1]
 NMIN_FIXED = NMIN_SWEEP[2]
 REPS = 100
