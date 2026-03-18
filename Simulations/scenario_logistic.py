@@ -169,6 +169,31 @@ def batch_observed_fisher(projected: np.ndarray, atoms: np.ndarray) -> np.ndarra
     term2 = np.einsum("mnd,mne->mde", mu, mu) / n
     return term1 - term2
 
+
+def batch_observed_fisher_diag(projected: np.ndarray, atoms: np.ndarray) -> np.ndarray:
+    """Batch observed Fisher information (diagonal-only structure).
+    
+    Returns (M, d, d) matrices with zeros off-diagonal for fast EM updates.
+    Computed from full Fisher but only diagonal is retained.
+    
+    Args:
+        projected: (n, C, d) projected features
+        atoms: (M, d) parameter atoms
+    
+    Returns:
+        F_diag: (M, d, d) diagonal precision matrices (zeros off-diagonal)
+    """
+    # Compute full Fisher
+    F_full = batch_observed_fisher(projected, atoms)  # (M, d, d)
+    
+    # Extract diagonal and create diagonal-only matrices
+    M, d, _ = F_full.shape
+    F_diag = np.zeros_like(F_full)
+    for i in range(M):
+        np.fill_diagonal(F_diag[i], np.diag(F_full[i]))
+    return F_diag
+
+
 def population_fisher_full(theta: np.ndarray, n_mc: int = 2000) -> np.ndarray:
     """Population Fisher Information (full covariance) for multiclass softmax.
 
@@ -233,6 +258,7 @@ class LogisticScenario(Scenario):
     def get_obs_prec_fn(self, data: Dict) -> Callable:
         X_list = data["X_list"]
         n_k = data["n_k"]
+        use_diag = data.get("use_diag", False)
         K = len(X_list)
         # 생성 시점에 미리 projection 해둠 (연산 최적화)
         proj_list = [_project_features(X) for X in X_list]
@@ -240,14 +266,26 @@ class LogisticScenario(Scenario):
         def prec_fn(atoms: np.ndarray) -> np.ndarray:
             M = atoms.shape[0]
             prec = np.zeros((K, M, DIM, DIM))
-            for k in range(K):
-                F_1 = batch_observed_fisher(proj_list[k], atoms)
-                # 1개 관측치 피셔에 n_k를 곱해 총 정밀도를 완성
-                prec[k] = _clip_spd(F_1 * n_k[k], min_eig=1e-8, max_eig=1e8)
+            
+            if use_diag:
+                # Fast diagonal-only Fisher
+                for k in range(K):
+                    F_1 = batch_observed_fisher_diag(proj_list[k], atoms)
+                    prec[k] = _clip_spd(F_1 * n_k[k], min_eig=1e-8, max_eig=1e8)
+            else:
+                # Full Fisher matrix
+                for k in range(K):
+                    F_1 = batch_observed_fisher(proj_list[k], atoms)
+                    # 1개 관측치 피셔에 n_k를 곱해 총 정밀도를 완성
+                    prec[k] = _clip_spd(F_1 * n_k[k], min_eig=1e-8, max_eig=1e8)
+            
             return prec
         return prec_fn
 
+
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
+        from scenario_base import _parallel_fit_clients
+        
         weights = np.asarray(cfg.prior_weights)
         theta_true = sample_prior(K, weights, rng)
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
@@ -256,11 +294,24 @@ class LogisticScenario(Scenario):
         obs_cov = np.zeros((K, DIM, DIM))
         oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
+        # Generate data and collect fit tuples
         X_list = []
+        fit_tuples = []
         for i in range(K):
             y, X = generate_multiclass_data(theta_true[i], n_k[i], rng)
             X_list.append(X)
-            theta_hat_i, fisher_full = fit_multiclass_logistic(y, X)
+            fit_tuples.append((y, X))
+
+        # Fit clients in parallel
+        fit_results = _parallel_fit_clients(
+            fit_tuples,
+            scenario_type="logistic",
+            n_jobs=-1,
+            backend="multiprocessing"
+        )
+
+        # Collect results
+        for i, (theta_hat_i, fisher_full) in enumerate(fit_results):
             theta_hat[i] = theta_hat_i
             cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
             cov_i_scaled = cov_i / n_k[i]  # <--- [핵심 추가] MLE의 올바른 점근적 분산
@@ -276,5 +327,6 @@ class LogisticScenario(Scenario):
             "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
-            "X_list": X_list
+            "X_list": X_list,
+            "use_diag": cfg.use_diag,
         }

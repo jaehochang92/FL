@@ -60,6 +60,7 @@ class SimConfig:
     adamix_iters: int = 20
     adamix_lr: float = 0.05
     seed: int = 20260311
+    use_diag: bool = False    # If True, use diagonal-only precision in EM updates
     # Prior: mixture of 5 curves in R^3 (trefoil knot + helix + tilted ellipse +
     # figure-8 + Viviani curve) — more complex than three circles.
     prior_n_curves: int = 5
@@ -184,6 +185,101 @@ def _batch_logdet(mat: np.ndarray, min_eig: float = 1e-12) -> np.ndarray:
 
 
 # ============================================================================
+# Diagonal-only precision operations (for fast EM updates)
+# ============================================================================
+
+def mahal_diag(diffs: np.ndarray, prec_diag: np.ndarray) -> np.ndarray:
+    """Compute Mahalanobis distance with diagonal precision matrices.
+    
+    Args:
+        diffs: (k, m, d) array of client-atom differences
+        prec_diag: (k, m, d, d) precision tensor (diagonal structure)
+                   Only diagonals are used; off-diagonals assumed zero.
+    
+    Returns:
+        mahal: (k, m) Mahalanobis distances
+    """
+    # Extract diagonal: (k, m, d)
+    diag = np.diagonal(prec_diag, axis1=2, axis2=3)
+    # Element-wise: sum_i diffs[k,m,i] * diag[k,m,i] * diffs[k,m,i]
+    return np.sum(diffs * diag * diffs, axis=2)
+
+
+def logdet_diag(prec_diag: np.ndarray, min_eig: float = 1e-12) -> np.ndarray:
+    """Log-determinant of diagonal precision matrices.
+    
+    Args:
+        prec_diag: (k, m, d, d) precision tensor (diagonal structure)
+        min_eig: minimum eigenvalue for clipping
+    
+    Returns:
+        log_det: (k, m) log-determinants
+    """
+    # Extract diagonal: (k, m, d)
+    diag = np.diagonal(prec_diag, axis1=2, axis2=3)
+    # Clip and return sum-of-logs
+    diag_clipped = np.clip(diag, min_eig, None)
+    return np.sum(np.log(diag_clipped), axis=2)
+
+
+# ============================================================================
+# Parallel client fitting
+# ============================================================================
+
+def _fit_client_poisson_wrapper(y: np.ndarray, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Wrapper for parallel Poisson client fitting.
+    
+    Imported here to avoid circular imports.
+    """
+    from scenario_poisson import fit_poisson_regression
+    return fit_poisson_regression(y, X)
+
+
+def _fit_client_logistic_wrapper(y: np.ndarray, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Wrapper for parallel logistic client fitting.
+    
+    Imported here to avoid circular imports.
+    """
+    from scenario_logistic import fit_multiclass_logistic
+    return fit_multiclass_logistic(y, X)
+
+
+def _parallel_fit_clients(
+    fit_tuples: List[Tuple],
+    scenario_type: str = "poisson",
+    n_jobs: int = -1,
+    backend: str = "multiprocessing",
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Fit K clients in parallel using joblib.
+    
+    Args:
+        fit_tuples: List of (y_or_label, X) tuples, one per client
+        scenario_type: "poisson" or "logistic"
+        n_jobs: Number of jobs for joblib (-1 = all cores)
+        backend: Joblib backend ("multiprocessing", "threading", "loky")
+    
+    Returns:
+        List of (theta_hat, fisher_full) tuples in order
+    """
+    try:
+        from joblib import Parallel, delayed
+    except ImportError:
+        raise ImportError("joblib required for parallel fitting; pip install joblib")
+    
+    if scenario_type == "poisson":
+        fit_fn = _fit_client_poisson_wrapper
+    elif scenario_type == "logistic":
+        fit_fn = _fit_client_logistic_wrapper
+    else:
+        raise ValueError(f"Unknown scenario_type: {scenario_type}")
+    
+    results = Parallel(n_jobs=n_jobs, backend=backend)(
+        delayed(fit_fn)(y_or_label, X) for y_or_label, X in fit_tuples
+    )
+    return results
+
+
+# ============================================================================
 # Estimators
 # ============================================================================
 
@@ -193,8 +289,14 @@ def vaneb_estimator(
     obs_var: np.ndarray,    # (K, d, d) client-reported covariance estimates (divided by n_k for proper scaling)
     prec_tensor_fn: Callable[[np.ndarray], np.ndarray], # atoms (M, d) -> (K, M, d, d) precision tensor for E-step
     em_iters: int,
+    use_diag: bool = False,
 ) -> Tuple[np.ndarray, float]:
-    """VANEB-MultiRound: Variance-Adaptive NPEB using Exact Observed Fisher."""
+    """VANEB-MultiRound: Variance-Adaptive NPEB using Exact Observed Fisher.
+    
+    Args:
+        use_diag: If True, use diagonal-only precision in EM updates (faster).
+                 If False, use full matrix operations (baseline).
+    """
     k_obs, d = x.shape
 
     try:
@@ -219,8 +321,15 @@ def vaneb_estimator(
             m = atoms.shape[0]
             diffs = x[:, None, :] - atoms[None, :, :]      # (k, m, d)
 
-            mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_tensor, diffs)
-            log_det = _batch_logdet(prec_tensor)
+            if use_diag:
+                # Fast diagonal-only operations
+                mahal = mahal_diag(diffs, prec_tensor)
+                log_det = logdet_diag(prec_tensor)
+            else:
+                # Full matrix operations
+                mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_tensor, diffs)
+                log_det = _batch_logdet(prec_tensor)
+            
             log_probs = -0.5 * (mahal + d * np.log(2 * np.pi) - log_det)
 
             log_probs_w = log_probs + np.log(np.maximum(weights, 1e-300))[None, :]
@@ -229,14 +338,29 @@ def vaneb_estimator(
             resp /= np.maximum(resp.sum(axis=1, keepdims=True), 1e-300)
 
             # M-step: update atoms using the precision tensor from clients, weighted by responsibilities
-            prec_x = np.einsum('kmde,kd->kme', prec_tensor, x)
-            num = np.einsum('km,kme->me', resp, prec_x)                 # (m, d)
-            prec_sum = np.einsum('km,kmde->mde', resp, prec_tensor)     # (m, d, d)
-            prec_sum = _clip_spd(prec_sum, min_eig=1e-8, max_eig=1e8)
+            if use_diag:
+                # Diagonal-only M-step: extract diagonal and use element-wise division
+                prec_diag = np.diagonal(prec_tensor, axis1=2, axis2=3)  # (k, m, d)
+                x_expanded = x[:, None, :]  # (K, d) -> (K, 1, d) broadcasts to (K, M, d)
+                prec_x = prec_diag * x_expanded  # (k, m, d) — diagonal precision times x
+                num = np.einsum('km,kmd->md', resp, prec_x)  # (m, d)
+                prec_sum_diag = np.einsum('km,kmd->md', resp, prec_diag)  # (m, d)
+                
+                new_atoms = np.zeros_like(atoms)
+                for j in range(m):
+                    # Element-wise division for diagonal: num[j] / prec_sum_diag[j]
+                    new_atoms[j] = num[j] / np.maximum(prec_sum_diag[j], 1e-12)
+            else:
+                # Full matrix M-step
+                prec_x = np.einsum('kmde,kd->kme', prec_tensor, x)
+                num = np.einsum('km,kme->me', resp, prec_x)                 # (m, d)
+                prec_sum = np.einsum('km,kmde->mde', resp, prec_tensor)     # (m, d, d)
+                prec_sum = _clip_spd(prec_sum, min_eig=1e-8, max_eig=1e8)
 
-            new_atoms = np.zeros_like(atoms)
-            for j in range(m):
-                new_atoms[j] = np.linalg.solve(prec_sum[j], num[j])
+                new_atoms = np.zeros_like(atoms)
+                for j in range(m):
+                    new_atoms[j] = np.linalg.solve(prec_sum[j], num[j])
+            
             atoms = new_atoms
 
             Nk = resp.sum(axis=0)
@@ -245,8 +369,14 @@ def vaneb_estimator(
         # posterior mean with final atoms and precision tensor from clients
         prec_final = _clip_spd(prec_tensor_fn(atoms), min_eig=1e-8, max_eig=1e8)
         diffs = x[:, None, :] - atoms[None, :, :]
-        mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_final, diffs)
-        log_det = _batch_logdet(prec_final)
+        
+        if use_diag:
+            mahal = mahal_diag(diffs, prec_final)
+            log_det = logdet_diag(prec_final)
+        else:
+            mahal = np.einsum('kmd,kmde,kme->km', diffs, prec_final, diffs)
+            log_det = _batch_logdet(prec_final)
+        
         log_probs = -0.5 * (mahal + d * np.log(2 * np.pi) - log_det)
         log_probs_w = log_probs + np.log(np.maximum(weights, 1e-300))[None, :]
         log_probs_w -= log_probs_w.max(axis=1, keepdims=True)
@@ -448,12 +578,13 @@ class Scenario(ABC):
         atoms = generate_prior_atoms(atoms_per_curve=200) * self.prior_scale
         theta_oracle = oracle_estimator(x, atoms, oracle_obs_var)
 
-        # 다형성을 이용해 현재 시나리오에 맞는 관측 피셔 콜백 함수를 받아옴
+        # Call the scenario-specific function to get the precision tensor function for VANEB, which depends on the scenario's data structure (e.g. X_list for GLMs).
         prec_tensor_fn = self.get_obs_prec_fn(data)
         
-        # VANEB (동적 정밀도 업데이트)
+        # VANEB with adaptive precision tensor from clients at each EM iteration (proposed)
         theta_vaneb, vaneb_time = vaneb_estimator(
-            x=x, obs_var=obs_var, prec_tensor_fn=prec_tensor_fn, em_iters=cfg.em_iters
+            x=x, obs_var=obs_var, prec_tensor_fn=prec_tensor_fn, em_iters=cfg.em_iters,
+            use_diag=cfg.use_diag
         )
 
         # NPEB (Soloff — uses local obs_var, fixed)

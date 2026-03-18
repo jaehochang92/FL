@@ -92,19 +92,55 @@ def batch_poisson_fisher(X: np.ndarray, atoms: np.ndarray) -> np.ndarray:
     F = np.einsum("nd,mn,ne->mde", X, mu, X)
     return F
 
+
+def batch_poisson_fisher_diag(X: np.ndarray, atoms: np.ndarray) -> np.ndarray:
+    """Batch Poisson Fisher information (diagonal-only structure).
+    
+    Returns (M, d, d) matrices with zeros off-diagonal for fast EM updates.
+    Computed from full Fisher but only diagonal is retained.
+    
+    Args:
+        X: (n, d) feature matrix
+        atoms: (M, d) parameter atoms
+    
+    Returns:
+        F_diag: (M, d, d) diagonal precision matrices (zeros off-diagonal)
+    """
+    # Compute full Fisher first
+    F_full = batch_poisson_fisher(X, atoms)  # (M, d, d)
+    
+    # Extract diagonal and create diagonal-only matrices
+    M, d, _ = F_full.shape
+    F_diag = np.zeros_like(F_full)
+    for i in range(M):
+        np.fill_diagonal(F_diag[i], np.diag(F_full[i]))
+    return F_diag
+
+
 class PoissonScenario(Scenario):
     name = "poisson"
     prior_scale = PRIOR_SCALE
 
     def get_obs_prec_fn(self, data: Dict) -> Callable:
         X_list = data["X_list"]
+        use_diag = data.get("use_diag", False)
+        
         def prec_fn(atoms: np.ndarray) -> np.ndarray:
             K = len(X_list)
             M = atoms.shape[0]
             prec = np.zeros((K, M, DIM, DIM))
-            for k in range(K):
-                F_total = batch_poisson_fisher(X_list[k], atoms)
-                prec[k] = _clip_spd(F_total, min_eig=1e-8, max_eig=1e8)
+            
+            if use_diag:
+                # Fast diagonal-only Fisher
+                for k in range(K):
+                    F_total = batch_poisson_fisher_diag(X_list[k], atoms)
+                    prec[k] = _clip_spd(F_total, min_eig=1e-8, max_eig=1e8)
+            else:
+                # Full Fisher matrix
+                for k in range(K):
+                    F_total = batch_poisson_fisher(X_list[k], atoms)
+                    prec[k] = _clip_spd(F_total, min_eig=1e-8, max_eig=1e8)
+            
             return prec
         return prec_fn
 
@@ -118,6 +154,8 @@ class PoissonScenario(Scenario):
         )
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
+        from scenario_base import _parallel_fit_clients
+        
         weights = np.asarray(cfg.prior_weights)
         theta_true = sample_prior(K, weights, rng) * PRIOR_SCALE
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
@@ -126,11 +164,24 @@ class PoissonScenario(Scenario):
         obs_cov = np.zeros((K, DIM, DIM))
         oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
 
+        # Generate data and collect fit tuples
         X_list = []
+        fit_tuples = []
         for i in range(K):
             y, X = generate_poisson_data(theta_true[i], n_k[i], rng)
             X_list.append(X)
-            th, fisher_full = fit_poisson_regression(y, X)
+            fit_tuples.append((y, X))
+
+        # Fit clients in parallel
+        fit_results = _parallel_fit_clients(
+            fit_tuples,
+            scenario_type="poisson",
+            n_jobs=-1,
+            backend="multiprocessing"
+        )
+
+        # Collect results
+        for i, (th, fisher_full) in enumerate(fit_results):
             theta_hat[i] = th
             cov_i = _batch_inv(fisher_full[None, :, :], min_eig=1e-6, max_eig=1e6)[0]
             obs_cov[i] = _clip_spd(
@@ -145,5 +196,6 @@ class PoissonScenario(Scenario):
             "obs_var": obs_cov,
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
-            "X_list": X_list
+            "X_list": X_list,
+            "use_diag": cfg.use_diag,
         }

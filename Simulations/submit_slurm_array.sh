@@ -31,7 +31,7 @@ CPUS="${SLURM_CPUS_PER_TASK:-${CPUS:-}}"
 
 usage() {
   cat <<'EOF'
-Usage: bash Simulations/submit_slurm_array.sh [options]
+Usage: bash Simulations/submit_slurm_array.sh [options] [run_all.py args]
 
 Options:
   -A, --account ACCOUNT      SLURM account/project to charge
@@ -42,12 +42,24 @@ Options:
   -c, --cpus N               CPUs per task
   -h, --help                 Show this message
 
+run_all.py arguments (passed through):
+  --diag                     Use diagonal-only precision in EM (fast mode)
+  --scenario SCENARIO        Run only one scenario
+  --reps N                   Number of replicates
+  --outdir DIR               Output directory
+  [any other run_all.py args]
+
 Environment alternatives:
   SLURM_ACCOUNT, SLURM_PARTITION, SLURM_QOS, SLURM_TIME, SLURM_MEM,
   SLURM_CPUS_PER_TASK, RUN_ARGS, PYTHON_BIN
 
 Persistent defaults:
   Create Simulations/slurm_site_defaults.sh to set ACCOUNT/PARTITION/QOS/TIME_LIMIT/MEMORY/CPUS once.
+
+Examples:
+  bash submit_slurm_array.sh --account myaccount --diag
+  bash submit_slurm_array.sh -A myaccount --scenario poisson --reps 50 --diag
+  export RUN_ARGS="--diag"; bash submit_slurm_array.sh --account myaccount
 EOF
 }
 
@@ -82,9 +94,21 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
-      usage
-      exit 1
+      # Forward unrecognized arguments to run_all.py
+      # If arg starts with --, it's a flag; collect it and its value if present
+      if [[ "$1" == --* ]]; then
+        RUN_ARGS="${RUN_ARGS} $1"
+        shift
+        # If next arg exists and doesn't start with --, treat as value for the flag
+        if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+          RUN_ARGS="${RUN_ARGS} $1"
+          shift
+        fi
+      else
+        # Single-dash short option; forward as-is
+        RUN_ARGS="${RUN_ARGS} $1"
+        shift
+      fi
       ;;
   esac
 done

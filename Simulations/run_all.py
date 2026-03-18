@@ -87,7 +87,7 @@ def run_sweep(sc_name: str, cfg: SimConfig, outdir: Path, no_progress: bool = Fa
         json.dump({
             "scenario": sc_name, "K": cfg.K, "n_min": cfg.n_min,
             "n_max": cfg.n_max, "reps": cfg.reps, "em_iters": cfg.em_iters,
-            "seed": cfg.seed,
+            "seed": cfg.seed, "use_diag": cfg.use_diag,
         }, f, indent=2)
 
     # Print summary
@@ -114,6 +114,8 @@ def main():
                         help="Run only one zero-based config index")
     parser.add_argument("--reps", type=int, default=None,
                         help="Override number of Monte Carlo replicates")
+    parser.add_argument("--diag", action="store_true", default=False,
+                        help="Use diagonal-only precision in EM updates (faster)")
     parser.add_argument("--outdir", type=str, default="outputs")
     parser.add_argument("--no-progress", action="store_true")
     args = parser.parse_args()
@@ -125,6 +127,10 @@ def main():
     if args.scenario:
         configs = [(n, c) for n, c in configs if n == args.scenario]
 
+    # Apply --diag flag to all configs
+    for _, cfg in configs:
+        cfg.use_diag = args.diag
+
     if args.reps is not None:
         if args.reps <= 0:
             raise ValueError("--reps must be a positive integer")
@@ -135,7 +141,8 @@ def main():
         for idx, (sc_name, cfg) in enumerate(configs):
             print(
                 f"{idx:3d}  {sc_name:12s}  K={cfg.K:4d}  "
-                f"nmin={cfg.n_min:4d}  nmax={cfg.n_max:4d}  reps={cfg.reps}"
+                f"nmin={cfg.n_min:4d}  nmax={cfg.n_max:4d}  reps={cfg.reps}  "
+                f"use_diag={cfg.use_diag}"
             )
         return
 
@@ -150,7 +157,7 @@ def main():
     if args.dry_run:
         for idx, (sc_name, cfg) in enumerate(configs):
             print(f"{idx:3d}  {sc_name:12s}  K={cfg.K:4d}  nmin={cfg.n_min:4d}  "
-                  f"nmax={cfg.n_max:4d}  reps={cfg.reps}")
+                  f"nmax={cfg.n_max:4d}  reps={cfg.reps}  use_diag={cfg.use_diag}")
         return
 
     outdir = Path(args.outdir)
@@ -159,6 +166,10 @@ def main():
     outdir.mkdir(parents=True, exist_ok=True)
 
     print(f"Running {len(configs)} configurations...")
+    if args.diag:
+        print("  Mode: DIAGONAL-ONLY precision (fast) in EM updates")
+    else:
+        print("  Mode: FULL matrix precision (baseline) in EM updates")
     t0 = time.time()
     for sc_name, cfg in configs:
         run_sweep(sc_name, cfg, outdir, no_progress=args.no_progress)
