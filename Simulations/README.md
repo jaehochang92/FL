@@ -7,7 +7,7 @@ Simulation code for the revised federated-learning experiments in the paper.
 The simulation framework is organized around a shared `Scenario` base class with three concrete scenarios:
 
 - `quadratic`: Gaussian sample means with diagonal variance $\Sigma(\theta) = {\rm diag}(\theta \odot \theta)$
-- `logistic`: multiclass logistic regression with $C = 6$ classes
+- `logistic`: multiclass logistic regression with $C = 3$ classes
 - `poisson`: Poisson regression fit by IRLS
 
 All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and report client-level RMSE for four estimators:
@@ -17,12 +17,18 @@ All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and r
 - `adamix`: Gaussian-mixture empirical Bayes baseline
 - `oracle`: Bayes posterior mean under the true prior and variance model
 
+Current prior setup:
+
+- Curve parameter support: $t \in [-\pi/2, \pi/2)$
+- Curve weights: $(0.35, 0.35, 0.1, 0.1, 0.1)$
+- Oracle atoms: 100 atoms per curve (fixed grid)
+
 ## Sweep Design
 
 For each scenario, `run_all.py` executes two sweeps (paper-aligned):
 
-- $n_{\min} \in \{50, 100, 200, 400, 800\}$ with $K = 200$ fixed
-- $K \in \{50, 100, 200, 400, 800\}$ with $n_{\min} = 50$ fixed
+- $n_{\min} \in \{10, 20, 40, 80, 160\}$ with $K = 200$ fixed
+- $K \in \{100, 200, 400, 800, 1600, 3200\}$ with $n_{\min} = 40$ fixed
 
 The default run uses 100 replicates per configuration and sets client sizes as
 $n_k \sim \mathrm{Unif}(n_{\min}, 2 n_{\min})$.
@@ -59,6 +65,12 @@ python Simulations/run_all.py --list-configs
 
 # Run exactly one indexed configuration
 python Simulations/run_all.py --config-index 5
+
+# Run a range of configurations
+python Simulations/run_all.py --config-index 5-10
+
+# Run a mixed list of indices/ranges
+python Simulations/run_all.py --config-index 1,3,7-9
 
 # Generate the six manuscript figures from completed outputs
 python Simulations/make_figures.py
@@ -105,9 +117,9 @@ python run_all.py --scenario poisson --reps 100
 # Diagonal-only mode (fast)
 python run_all.py --scenario poisson --reps 100 --diag
 
-# Mix: full mode for K sweep, diagonal for n_min sweep
-python run_all.py --scenario poisson --config-index 0-4        # full (n_min sweep)
-python run_all.py --scenario poisson --config-index 5-10 --diag # diag (K sweep)
+# Mix: full mode for n_min sweep, diagonal for K sweep
+python run_all.py --scenario poisson --config-index 0-4 --reps 100         # full (n_min sweep)
+python run_all.py --scenario poisson --config-index 5-10 --reps 100 --diag # diag (K sweep)
 ```
 
 The chosen mode is logged in `config.json` as `"use_diag": true/false`.
@@ -145,7 +157,7 @@ Outputs are written under `Simulations/outputs/` when launched from the reposito
 | `scenario_logistic.py` | Multiclass logistic scenario. Implements `batch_observed_fisher_diag()` for fast diagonal-only Fisher computation. |
 | `scenario_poisson.py` | Poisson regression scenario. Implements `batch_poisson_fisher_diag()` for fast diagonal-only Fisher computation. |
 | `run_all.py` | Unified sweep runner for all scenarios. Supports `--diag` flag to enable diagonal-only EM updates. |
-| `make_figures.py` | Generate the six manuscript figures from completed outputs |
+| `make_figures.py` | Generate the six manuscript figures from completed outputs (supports both `metrics.csv` and sharded `metrics_part_*.csv`) |
 | `plot_prior_atoms_3d.py` | Create a 3D illustration of the five-curve prior atoms |
 | `slurm_array_job.sh` | One SLURM array task = one indexed simulation config |
 | `submit_slurm_array.sh` | Helper to submit the full config list as a SLURM array |
@@ -187,6 +199,7 @@ bash Simulations/submit_slurm_array.sh --diag
 - **Array indexing:** Zero-based. When rep sharding is enabled, each task maps to a `(config_index, rep_range)` pair from a manifest.
 - **Config discovery:** The script uses `python Simulations/run_all.py --list-configs` to determine array size.
 - **Manual task execution:** `python Simulations/run_all.py --config-index <idx> --no-progress --diag`.
+- **Multi-config local execution:** `--config-index` accepts `5`, `5-10`, or `1,3,7-9`.
 - **Python interpreter:** Set `PYTHON_BIN` if your cluster does not use `python3`.
 - **Persistent defaults:** `submit_slurm_array.sh` auto-loads `Simulations/slurm_site_defaults.sh` (e.g., to set `ACCOUNT`, `PARTITION`, `TIME_LIMIT`).
 - **Diagonal speedup:** Use `--diag` for 10–15% faster runs when K ≥ 500 (negligible accuracy trade-off).

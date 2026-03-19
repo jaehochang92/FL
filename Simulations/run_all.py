@@ -63,6 +63,36 @@ def build_configs(smoke: bool = False):
     return configs
 
 
+def parse_config_index_spec(spec: str, max_index: int) -> list[int]:
+    """Parse a config index spec like '5', '5-10', or '1,3,7-9'."""
+    indices = []
+    for token in (s.strip() for s in spec.split(",")):
+        if not token:
+            continue
+        if "-" in token:
+            parts = token.split("-", 1)
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise ValueError(f"Invalid range token '{token}' in --config-index")
+            start = int(parts[0])
+            end = int(parts[1])
+            if start > end:
+                raise ValueError(f"Invalid range '{token}': start must be <= end")
+            indices.extend(range(start, end + 1))
+        else:
+            indices.append(int(token))
+
+    if not indices:
+        raise ValueError("--config-index is empty")
+
+    unique = list(dict.fromkeys(indices))
+    for idx in unique:
+        if idx < 0 or idx > max_index:
+            raise IndexError(
+                f"--config-index {idx} out of range [0, {max_index}]"
+            )
+    return unique
+
+
 def run_sweep(
     sc_name: str,
     cfg: SimConfig,
@@ -134,8 +164,8 @@ def main():
                         help="Print configs without running")
     parser.add_argument("--list-configs", action="store_true",
                         help="List configs with zero-based indices and exit")
-    parser.add_argument("--config-index", type=int, default=None,
-                        help="Run only one zero-based config index")
+    parser.add_argument("--config-index", type=str, default=None,
+                        help="Run one/many zero-based config indices: '5', '5-10', or '1,3,7-9'")
     parser.add_argument("--reps", type=int, default=None,
                         help="Override number of Monte Carlo replicates")
     parser.add_argument("--rep-start", type=int, default=None,
@@ -182,12 +212,8 @@ def main():
         return
 
     if args.config_index is not None:
-        if args.config_index < 0 or args.config_index >= len(configs):
-            raise IndexError(
-                f"--config-index {args.config_index} out of range "
-                f"[0, {len(configs) - 1}]"
-            )
-        configs = [configs[args.config_index]]
+        selected = parse_config_index_spec(args.config_index, len(configs) - 1)
+        configs = [configs[i] for i in selected]
 
     if args.dry_run:
         for idx, (sc_name, cfg) in enumerate(configs):
