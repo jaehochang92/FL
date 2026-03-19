@@ -83,33 +83,34 @@ def style_axes(ax: plt.Axes) -> None:
     ax.tick_params(labelsize=10)
 
 
-def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str, fixed_value: int, output_name: str) -> None:
-    if summary.empty:
-        print(f"  [Skip] No data loaded yet. Cannot plot {output_name}.")
-        return
-
+def _plot_sweep_on_ax(
+    ax: plt.Axes,
+    summary: pd.DataFrame,
+    scenario: str,
+    x_key: str,
+    fixed_key: str,
+    fixed_value: int,
+    show_legend: bool = True,
+) -> bool:
     subset = summary[
         (summary["scenario"] == scenario) &
         (summary[fixed_key] == fixed_value)
     ].sort_values(x_key)
 
-    # 안전장치 1: 해당 조건에 맞는 데이터가 아직 시뮬레이션되지 않았으면 스킵!
     if subset.empty:
-        print(f"  [Skip] No data found for {scenario} where {fixed_key}={fixed_value}. Skipping {output_name}.")
-        return
+        return False
 
-    fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
     style_axes(ax)
-
     x_values = subset[x_key].to_numpy()
-    
+
     for metric, label, color, marker in ESTIMATORS:
-        if f"{metric}_mean" not in subset.columns:
+        col_mean = f"{metric}_mean"
+        col_sem = f"{metric}_sem"
+        if col_mean not in subset.columns or col_sem not in subset.columns:
             continue
-            
-        means = subset[f"{metric}_mean"].to_numpy()
-        sems = subset[f"{metric}_sem"].to_numpy()
-        
+
+        means = subset[col_mean].to_numpy()
+        sems = subset[col_sem].to_numpy()
         ax.plot(
             x_values,
             means,
@@ -129,12 +130,83 @@ def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_ke
     ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
     ax.set_ylabel("RMSE (Log Scale)", fontsize=11)
     ax.set_title(SCENARIO_TITLES[scenario] + " (Log-Log)", fontsize=12, pad=8)
-    ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
+    if show_legend:
+        ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
+    return True
+
+
+def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_key: str, fixed_value: int, output_name: str) -> None:
+    if summary.empty:
+        print(f"  [Skip] No data loaded yet. Cannot plot {output_name}.")
+        return
+
+    fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
+    ok = _plot_sweep_on_ax(ax, summary, scenario, x_key, fixed_key, fixed_value, show_legend=True)
+    if not ok:
+        plt.close(fig)
+        print(f"  [Skip] No data found for {scenario} where {fixed_key}={fixed_value}. Skipping {output_name}.")
+        return
 
     pdf_path = FIGURE_DIR / f"{output_name}_loglog.pdf"
     png_path = FIGURE_DIR / f"{output_name}_loglog.png"
     fig.savefig(pdf_path, bbox_inches="tight")
     fig.savefig(png_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_combined_loglog(summary: pd.DataFrame) -> None:
+    """Create one combined 3x2 panel figure with all scenario sweeps."""
+    if summary.empty:
+        print("  [Skip] No data loaded yet. Cannot plot combined figure.")
+        return
+
+    layout = [
+        ("quadratic", "K", "nmin", NMIN_FIXED, "Quadratic: K-sweep"),
+        ("quadratic", "nmin", "K", K_FIXED, "Quadratic: nmin-sweep"),
+        ("logistic", "K", "nmin", NMIN_FIXED, "Logistic: K-sweep"),
+        ("logistic", "nmin", "K", K_FIXED, "Logistic: nmin-sweep"),
+        ("poisson", "K", "nmin", NMIN_FIXED, "Poisson: K-sweep"),
+        ("poisson", "nmin", "K", K_FIXED, "Poisson: nmin-sweep"),
+    ]
+
+    fig, axes = plt.subplots(3, 2, figsize=(11.5, 13.0), constrained_layout=True)
+    axes = axes.ravel()
+
+    any_plotted = False
+    for ax, (scenario, x_key, fixed_key, fixed_value, title) in zip(axes, layout):
+        ok = _plot_sweep_on_ax(
+            ax,
+            summary,
+            scenario,
+            x_key,
+            fixed_key,
+            fixed_value,
+            show_legend=False,
+        )
+        if not ok:
+            ax.axis("off")
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=11)
+            continue
+        ax.set_title(title, fontsize=12, pad=8)
+        any_plotted = True
+
+    if not any_plotted:
+        plt.close(fig)
+        print("  [Skip] No matching data for combined figure.")
+        return
+
+    handles = []
+    labels = []
+    for metric, label, color, marker in ESTIMATORS:
+        h = plt.Line2D([], [], color=color, marker=marker, linewidth=2.1, markersize=5.5, label=label)
+        handles.append(h)
+        labels.append(label)
+    fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.02))
+
+    pdf_path = FIGURE_DIR / "all_scenarios_combined_loglog.pdf"
+    png_path = FIGURE_DIR / "all_scenarios_combined_loglog.png"
+    fig.savefig(pdf_path, bbox_inches="tight")
+    fig.savefig(png_path, dpi=240, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -161,6 +233,7 @@ def main() -> None:
     plot_sweep_loglog(summary, "logistic", "nmin", "K", K_FIXED, "logistic_nmin_sweep")
     plot_sweep_loglog(summary, "poisson", "K", "nmin", NMIN_FIXED, "poisson_k_sweep")
     plot_sweep_loglog(summary, "poisson", "nmin", "K", K_FIXED, "poisson_nmin_sweep")
+    plot_combined_loglog(summary)
 
 if __name__ == "__main__":
     main()

@@ -76,6 +76,10 @@ python Simulations/run_all.py --config-index 1,3,7-9
 # Generate the six manuscript figures from completed outputs
 python Simulations/make_figures.py
 
+# This also creates a combined 3x2 panel figure:
+# Simulations/figures/all_scenarios_combined_loglog.pdf
+# Simulations/figures/all_scenarios_combined_loglog.png
+
 # Generate a 3D illustration of prior atoms
 python Simulations/plot_prior_atoms_3d.py
 ```
