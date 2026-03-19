@@ -20,6 +20,7 @@ All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and r
 Current prior setup:
 
 - Curve parameter support: $t \in [-\pi/2, \pi/2)$
+- Support-to-phase mapping: $u = 2(t + \pi/2)$, so each curve is traversed over a full cycle $u \in [0, 2\pi)$ (preserves full helix/trefoil/figure-8/Viviani shapes)
 - Curve weights: $(0.35, 0.35, 0.1, 0.1, 0.1)$
 - Oracle atoms: 100 atoms per curve (fixed grid)
 

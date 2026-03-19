@@ -73,44 +73,53 @@ class SimConfig:
 # Complex prior geometry in R^3
 # ============================================================================
 
+def _support_to_angle(t: np.ndarray) -> np.ndarray:
+    """Map support t in [-pi/2, pi/2) to phase u in [0, 2pi)."""
+    return 2.0 * (t + 0.5 * np.pi)
+
 def _trefoil_knot(t: np.ndarray) -> np.ndarray:
-    """Trefoil knot parametrised by t ∈ [0, 2π), centered at (-2, 0, 0)."""
-    x = np.sin(t) + 2 * np.sin(2 * t)
-    y = np.cos(t) - 2 * np.cos(2 * t)
-    z = -np.sin(3 * t)
+    """Trefoil knot centered at (-2, 0, 0)."""
+    u = _support_to_angle(t)
+    x = np.sin(u) + 2 * np.sin(2 * u)
+    y = np.cos(u) - 2 * np.cos(2 * u)
+    z = -np.sin(3 * u)
     return np.column_stack([x - 2, y, z])
 
 
 def _helix(t: np.ndarray) -> np.ndarray:
-    """Helix parametrised by t ∈ [0, 2π), centered at (2, 0, 0)."""
-    x = 1.2 * np.cos(t)
-    y = 1.2 * np.sin(t)
-    z = t / np.pi - 1  # maps [0,2π) to [-1,1)
+    """Helix centered at (2, 0, 0)."""
+    u = _support_to_angle(t)
+    x = 1.2 * np.cos(u)
+    y = 1.2 * np.sin(u)
+    z = u / np.pi - 1  # maps [0,2π) to [-1,1)
     return np.column_stack([x + 2, y, z])
 
 
 def _tilted_ellipse(t: np.ndarray) -> np.ndarray:
     """Tilted ellipse in a plane not aligned with any axis, center (0, 2.5, 0)."""
+    u = _support_to_angle(t)
     a, b = 1.5, 0.8
-    x = a * np.cos(t)
-    y = b * np.sin(t) * np.cos(np.pi / 5)
-    z = b * np.sin(t) * np.sin(np.pi / 5)
+    x = a * np.cos(u)
+    y = b * np.sin(u) * np.cos(np.pi / 5)
+    z = b * np.sin(u) * np.sin(np.pi / 5)
     return np.column_stack([x, y + 2.5, z])
 
 
 def _figure_eight(t: np.ndarray) -> np.ndarray:
     """Figure-eight (lemniscate of Gerono) in 3D, center (0, -2.5, 1)."""
-    x = np.sin(t)
-    y = np.sin(t) * np.cos(t)
-    z = 0.5 * np.sin(2 * t)
+    u = _support_to_angle(t)
+    x = np.sin(u)
+    y = np.sin(u) * np.cos(u)
+    z = 0.5 * np.sin(2 * u)
     return np.column_stack([x, y - 2.5, z + 1])
 
 
 def _viviani_curve(t: np.ndarray) -> np.ndarray:
     """Viviani's curve (intersection of sphere and cylinder), center (0, 0, -2.5)."""
-    x = 1 + np.cos(t)
-    y = np.sin(t)
-    z = 2 * np.sin(t / 2)
+    u = _support_to_angle(t)
+    x = 1 + np.cos(u)
+    y = np.sin(u)
+    z = 2 * np.sin(u / 2)
     return np.column_stack([x, y, z - 2.5])
 
 

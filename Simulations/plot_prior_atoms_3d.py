@@ -10,7 +10,7 @@ from scenario_base import PRIOR_CURVES
 
 
 ROOT = Path(__file__).resolve().parent
-FIGURE_DIR = ROOT / "figures"
+FIGURE_DIR = ROOT
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
 
