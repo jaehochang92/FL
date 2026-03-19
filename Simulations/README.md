@@ -183,6 +183,7 @@ bash Simulations/submit_slurm_array.sh --diag
 - **Python interpreter:** Set `PYTHON_BIN` if your cluster does not use `python3`.
 - **Persistent defaults:** `submit_slurm_array.sh` auto-loads `Simulations/slurm_site_defaults.sh` (e.g., to set `ACCOUNT`, `PARTITION`, `TIME_LIMIT`).
 - **Diagonal speedup:** Use `--diag` for 10–15% faster runs when K ≥ 500 (negligible accuracy trade-off).
+- **Job limits:** If the config count exceeds 999, `submit_slurm_array.sh` automatically splits into multiple arrays and uses `ARRAY_OFFSET` to map indices. Override with `MAX_ARRAY_SIZE` if your cluster allows a different limit.
 
 ## Requirements
 
