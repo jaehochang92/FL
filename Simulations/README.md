@@ -28,8 +28,8 @@ Current prior setup:
 
 For each scenario, `run_all.py` executes two sweeps (paper-aligned):
 
-- $n_{\min} \in \{10, 20, 40, 80, 160\}$ with $K = 200$ fixed
-- $K \in \{100, 200, 400, 800, 1600, 3200\}$ with $n_{\min} = 40$ fixed
+- $n_{\min} \in \{5, 10, 20, 40\}$ with $K = 200$ fixed
+- $K \in \{50, 200, 800, 3200\}$ with $n_{\min} = 20$ fixed
 
 The default run uses 100 replicates per configuration and sets client sizes as
 $n_k \sim \mathrm{Unif}(n_{\min}, 2 n_{\min})$.
@@ -68,10 +68,10 @@ python Simulations/run_all.py --list-configs
 python Simulations/run_all.py --config-index 5
 
 # Run a range of configurations
-python Simulations/run_all.py --config-index 5-10
+python Simulations/run_all.py --config-index 4-7
 
 # Run a mixed list of indices/ranges
-python Simulations/run_all.py --config-index 1,3,7-9
+python Simulations/run_all.py --config-index 1,3,4-7
 
 # Generate the six manuscript figures from completed outputs
 python Simulations/make_figures.py
@@ -107,9 +107,9 @@ For faster iteration on large-scale experiments, use the `--diag` flag to enable
 
 | Scenario | K | nmin | Full | Diagonal | Speedup |
 |----------|---|------|------|----------|---------|
-| poisson  | 200 | 40   | 5.6s | 5.1s     | 9% |
-| poisson  | 400 | 40   | 11.9s| 10.4s    | 12% |
-| logistic | 200 | 40   | ~7s  | ~6.5s    | ~7% |
+| poisson  | 200 | 20   | 5.6s | 5.1s     | 9% |
+| poisson  | 800 | 20   | 11.9s| 10.4s    | 12% |
+| logistic | 200 | 20   | ~7s  | ~6.5s    | ~7% |
 
 ### Configuration
 
@@ -123,8 +123,8 @@ python run_all.py --scenario poisson --reps 100
 python run_all.py --scenario poisson --reps 100 --diag
 
 # Mix: full mode for n_min sweep, diagonal for K sweep
-python run_all.py --scenario poisson --config-index 0-4 --reps 100         # full (n_min sweep)
-python run_all.py --scenario poisson --config-index 5-10 --reps 100 --diag # diag (K sweep)
+python run_all.py --scenario poisson --config-index 0-3 --reps 100         # full (n_min sweep)
+python run_all.py --scenario poisson --config-index 4-7 --reps 100 --diag  # diag (K sweep)
 ```
 
 The chosen mode is logged in `config.json` as `"use_diag": true/false`.
@@ -205,6 +205,7 @@ bash Simulations/submit_slurm_array.sh --diag
 - **Config discovery:** The script uses `python Simulations/run_all.py --list-configs` to determine array size.
 - **Manual task execution:** `python Simulations/run_all.py --config-index <idx> --no-progress --diag`.
 - **Multi-config local execution:** `--config-index` accepts `5`, `5-10`, or `1,3,7-9`.
+- **Multi-config local execution:** `--config-index` accepts `5`, `4-7`, or `1,3,4-7`.
 - **Python interpreter:** Set `PYTHON_BIN` if your cluster does not use `python3`.
 - **Persistent defaults:** `submit_slurm_array.sh` auto-loads `Simulations/slurm_site_defaults.sh` (e.g., to set `ACCOUNT`, `PARTITION`, `TIME_LIMIT`).
 - **Diagonal speedup:** Use `--diag` for 10–15% faster runs when K ≥ 500 (negligible accuracy trade-off).

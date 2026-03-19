@@ -34,8 +34,8 @@ SCENARIOS = {
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Sweep configurations (paper-aligned)
-NMIN_SWEEP = [10, 20, 40, 80, 160]
-K_SWEEP = [100, 200, 400, 800, 1600, 3200]
+NMIN_SWEEP = [5, 10, 20, 40]
+K_SWEEP = [50, 200, 800, 3200]
 K_FIXED = K_SWEEP[1]
 NMIN_FIXED = NMIN_SWEEP[2]
 REPS = 100
@@ -55,7 +55,7 @@ def build_configs(smoke: bool = False):
             )))
         # K sweep (n_min fixed)
         for K in (K_SWEEP[:1] if smoke else K_SWEEP):
-            nmin = 40 if smoke else NMIN_FIXED
+            nmin = NMIN_FIXED
             configs.append((sc_name, SimConfig(
                 K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
             )))
