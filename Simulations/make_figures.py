@@ -40,11 +40,14 @@ def load_summary() -> pd.DataFrame:
         k_value = int(k_token[1:])
         nmin_value = int(nmin_token.replace("nmin", ""))
 
+        part_files = sorted(run_dir.glob("metrics_part_*.csv"))
         metrics_file = run_dir / "metrics.csv"
-        if not metrics_file.exists():
+        if part_files:
+            metrics = pd.concat((pd.read_csv(p) for p in part_files), ignore_index=True)
+        elif metrics_file.exists():
+            metrics = pd.read_csv(metrics_file)
+        else:
             continue
-
-        metrics = pd.read_csv(metrics_file)
         row = {
             "scenario": scenario,
             "K": k_value,
