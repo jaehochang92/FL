@@ -114,6 +114,10 @@ def main():
                         help="Run only one zero-based config index")
     parser.add_argument("--reps", type=int, default=None,
                         help="Override number of Monte Carlo replicates")
+    parser.add_argument("--rep-start", type=int, default=None,
+                        help="Start index for replicate range (for sharded runs)")
+    parser.add_argument("--rep-count", type=int, default=None,
+                        help="Number of replicates to run from rep-start")
     parser.add_argument("--diag", action="store_true", default=False,
                         help="Use diagonal-only precision in EM updates (faster)")
     parser.add_argument("--outdir", type=str, default="outputs")
@@ -136,6 +140,13 @@ def main():
             raise ValueError("--reps must be a positive integer")
         for _, cfg in configs:
             cfg.reps = args.reps
+
+    if args.rep_start is not None and args.rep_start < 0:
+        raise ValueError("--rep-start must be >= 0")
+    if args.rep_count is not None and args.rep_count <= 0:
+        raise ValueError("--rep-count must be a positive integer")
+    if args.rep_start is None and args.rep_count is not None:
+        raise ValueError("--rep-count requires --rep-start")
 
     if args.list_configs:
         for idx, (sc_name, cfg) in enumerate(configs):
@@ -172,7 +183,14 @@ def main():
         print("  Mode: FULL matrix precision (baseline) in EM updates")
     t0 = time.time()
     for sc_name, cfg in configs:
-        run_sweep(sc_name, cfg, outdir, no_progress=args.no_progress)
+        run_sweep(
+            sc_name,
+            cfg,
+            outdir,
+            no_progress=args.no_progress,
+            rep_start=args.rep_start or 0,
+            rep_count=args.rep_count,
+        )
     print(f"\nTotal time: {time.time() - t0:.1f}s")
 
 
