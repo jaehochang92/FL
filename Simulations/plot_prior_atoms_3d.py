@@ -16,7 +16,7 @@ FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
 def main() -> None:
     atoms_per_curve = 400
-    t = np.linspace(0.0, 2.0 * np.pi, atoms_per_curve, endpoint=False)
+    t = np.linspace(-.5 * np.pi, .5 * np.pi, atoms_per_curve, endpoint=False)
 
     labels = ["Trefoil", "Helix", "Tilted Ellipse", "Figure-8", "Viviani"]
     colors = ["#1f77b4", "#e76f51", "#2a9d8f", "#f4a261", "#6d597a"]
