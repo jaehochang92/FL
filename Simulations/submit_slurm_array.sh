@@ -120,8 +120,9 @@ if [[ "$COUNT" -le 0 ]]; then
   exit 1
 fi
 MAX_INDEX=$((COUNT - 1))
+MAX_ARRAY_SIZE=${MAX_ARRAY_SIZE:-999}
 
-echo "Submitting SLURM array with indices 0-${MAX_INDEX}"
+echo "Total configurations: ${COUNT}"
 echo "RUN_ARGS='${RUN_ARGS}'"
 [[ -n "$ACCOUNT" ]] && echo "ACCOUNT='${ACCOUNT}'"
 [[ -n "$PARTITION" ]] && echo "PARTITION='${PARTITION}'"
@@ -133,33 +134,47 @@ echo "RUN_ARGS='${RUN_ARGS}'"
 LOGS_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOGS_DIR"
 
-SBATCH_ARGS=(
-  "--array=0-${MAX_INDEX}"
-  "--export=ALL,RUN_ARGS=${RUN_ARGS}"
-  "--output=${LOGS_DIR}/slurm_%A_%a.out"
-  "--error=${LOGS_DIR}/slurm_%A_%a.err"
-)
-
-[[ -n "$ACCOUNT" ]] && SBATCH_ARGS+=("--account=${ACCOUNT}")
-[[ -n "$PARTITION" ]] && SBATCH_ARGS+=("--partition=${PARTITION}")
-[[ -n "$QOS" ]] && SBATCH_ARGS+=("--qos=${QOS}")
-[[ -n "$TIME_LIMIT" ]] && SBATCH_ARGS+=("--time=${TIME_LIMIT}")
-[[ -n "$MEMORY" ]] && SBATCH_ARGS+=("--mem=${MEMORY}")
-[[ -n "$CPUS" ]] && SBATCH_ARGS+=("--cpus-per-task=${CPUS}")
-
-set +e
-SUBMIT_OUTPUT=$(sbatch "${SBATCH_ARGS[@]}" "$SCRIPT_DIR/slurm_array_job.sh" 2>&1)
-SUBMIT_EXIT=$?
-set -e
-
-if [[ $SUBMIT_EXIT -ne 0 ]]; then
-  echo "$SUBMIT_OUTPUT" >&2
-  if [[ "$SUBMIT_OUTPUT" == *"Must specify account for job"* ]]; then
-    echo "Hint: your cluster requires an account. Re-run with:" >&2
-    echo "  bash Simulations/submit_slurm_array.sh --account <your_account>" >&2
-    echo "or set env var: SLURM_ACCOUNT=<your_account>" >&2
+START_INDEX=0
+while [[ $START_INDEX -le $MAX_INDEX ]]; do
+  END_INDEX=$((START_INDEX + MAX_ARRAY_SIZE - 1))
+  if [[ $END_INDEX -gt $MAX_INDEX ]]; then
+    END_INDEX=$MAX_INDEX
   fi
-  exit $SUBMIT_EXIT
-fi
+  ARRAY_COUNT=$((END_INDEX - START_INDEX + 1))
+  ARRAY_MAX=$((ARRAY_COUNT - 1))
 
-echo "$SUBMIT_OUTPUT"
+  echo "Submitting SLURM array for indices ${START_INDEX}-${END_INDEX} (array 0-${ARRAY_MAX})"
+
+  SBATCH_ARGS=(
+    "--array=0-${ARRAY_MAX}"
+    "--export=ALL,RUN_ARGS=${RUN_ARGS},ARRAY_OFFSET=${START_INDEX}"
+    "--output=${LOGS_DIR}/slurm_%A_%a.out"
+    "--error=${LOGS_DIR}/slurm_%A_%a.err"
+  )
+
+  [[ -n "$ACCOUNT" ]] && SBATCH_ARGS+=("--account=${ACCOUNT}")
+  [[ -n "$PARTITION" ]] && SBATCH_ARGS+=("--partition=${PARTITION}")
+  [[ -n "$QOS" ]] && SBATCH_ARGS+=("--qos=${QOS}")
+  [[ -n "$TIME_LIMIT" ]] && SBATCH_ARGS+=("--time=${TIME_LIMIT}")
+  [[ -n "$MEMORY" ]] && SBATCH_ARGS+=("--mem=${MEMORY}")
+  [[ -n "$CPUS" ]] && SBATCH_ARGS+=("--cpus-per-task=${CPUS}")
+
+  set +e
+  SUBMIT_OUTPUT=$(sbatch "${SBATCH_ARGS[@]}" "$SCRIPT_DIR/slurm_array_job.sh" 2>&1)
+  SUBMIT_EXIT=$?
+  set -e
+
+  if [[ $SUBMIT_EXIT -ne 0 ]]; then
+    echo "$SUBMIT_OUTPUT" >&2
+    if [[ "$SUBMIT_OUTPUT" == *"Must specify account for job"* ]]; then
+      echo "Hint: your cluster requires an account. Re-run with:" >&2
+      echo "  bash Simulations/submit_slurm_array.sh --account <your_account>" >&2
+      echo "or set env var: SLURM_ACCOUNT=<your_account>" >&2
+    fi
+    exit $SUBMIT_EXIT
+  fi
+
+  echo "$SUBMIT_OUTPUT"
+
+  START_INDEX=$((END_INDEX + 1))
+done

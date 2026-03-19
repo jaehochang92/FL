@@ -38,6 +38,9 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   exit 1
 fi
 
+ARRAY_OFFSET=${ARRAY_OFFSET:-0}
+CONFIG_INDEX=$((SLURM_ARRAY_TASK_ID + ARRAY_OFFSET))
+
 # Optional venv activation if present.
 if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
@@ -56,7 +59,7 @@ fi
 # RUN_ARGS="--scenario poisson --reps 30"
 # shellcheck disable=SC2086
 "$PY" run_all.py \
-  --config-index "$SLURM_ARRAY_TASK_ID" \
+  --config-index "$CONFIG_INDEX" \
   --no-progress \
   --outdir "${OUTPUT_DIR:-outputs}" \
   ${RUN_ARGS:-}
