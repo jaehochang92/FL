@@ -1,0 +1,12 @@
+{
+  "scenario": "poisson",
+  "K": 200,
+  "n_min": 40,
+  "n_max": 80,
+  "reps": 100,
+  "em_iters": 25,
+  "seed": 20260311,
+  "use_diag": false,
+  "rep_start": 56,
+  "rep_end": 60
+}
