@@ -125,7 +125,7 @@ def sample_prior(
     """Sample K points from the 5-curve mixture prior in R^3."""
     n_curves = len(PRIOR_CURVES)
     comp = rng.choice(n_curves, size=K, p=weights)
-    t = rng.uniform(0.0, 2 * np.pi, size=K)
+    t = rng.uniform(-0.5 * np.pi, 0.5 * np.pi, size=K)
     points = np.zeros((K, DIM))
     for c in range(n_curves):
         mask = comp == c
@@ -136,7 +136,7 @@ def sample_prior(
 
 def generate_prior_atoms(atoms_per_curve: int = 100) -> np.ndarray:
     """Generate fixed atoms along all 5 curves for Oracle evaluation."""
-    t = np.linspace(0, 2 * np.pi, atoms_per_curve, endpoint=False)
+    t = np.linspace(-0.5 * np.pi, 0.5 * np.pi, atoms_per_curve, endpoint=False)
     atoms = [curve(t) for curve in PRIOR_CURVES]
     return np.vstack(atoms)
 
