@@ -36,9 +36,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Sweep configurations (paper-aligned)
 NMIN_SWEEP = [5, 10, 20, 40]
 K_SWEEP = [50, 200, 800, 3200]
-K_FIXED = K_SWEEP[1]
-NMIN_FIXED = NMIN_SWEEP[2]
-REPS = 100
+NMIN_FIXED = NMIN_SWEEP[3]
+K_FIXED = K_SWEEP[0]
+REPS = 10
 
 
 def build_configs(smoke: bool = False):

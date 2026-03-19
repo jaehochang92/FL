@@ -124,10 +124,10 @@ def _plot_sweep_on_ax(
         ax.fill_between(x_values, lower_bound, means + sems, color=color, alpha=0.12)
 
     ax.set_xscale("log", base=2)
-    ax.set_yscale("log", base=10)
+    ax.set_yscale("log", base=2)
     ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
     ax.set_xticks(x_values)
-    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
+    ax.set_xlabel(r"$K$ (Log Scale)" if x_key == "K" else r"$n_{\min}$ (Log Scale)", fontsize=11)
     ax.set_ylabel("RMSE (Log Scale)", fontsize=11)
     ax.set_title(SCENARIO_TITLES[scenario] + " (Log-Log)", fontsize=12, pad=8)
     if show_legend:
