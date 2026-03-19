@@ -43,7 +43,18 @@ def load_summary() -> pd.DataFrame:
         part_files = sorted(run_dir.glob("metrics_part_*.csv"))
         metrics_file = run_dir / "metrics.csv"
         if part_files:
-            metrics = pd.concat((pd.read_csv(p) for p in part_files), ignore_index=True)
+            frames = []
+            for part in part_files:
+                try:
+                    frames.append(pd.read_csv(part))
+                except pd.errors.EmptyDataError:
+                    continue
+            if frames:
+                metrics = pd.concat(frames, ignore_index=True)
+            elif metrics_file.exists():
+                metrics = pd.read_csv(metrics_file)
+            else:
+                continue
         elif metrics_file.exists():
             metrics = pd.read_csv(metrics_file)
         else:
