@@ -13,6 +13,7 @@ import json
 import time
 import warnings
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -62,13 +63,28 @@ def build_configs(smoke: bool = False):
     return configs
 
 
-def run_sweep(sc_name: str, cfg: SimConfig, outdir: Path, no_progress: bool = False):
+def run_sweep(
+    sc_name: str,
+    cfg: SimConfig,
+    outdir: Path,
+    no_progress: bool = False,
+    rep_start: int = 0,
+    rep_count: Optional[int] = None,
+):
     """Run one (scenario, config) combination and save results."""
     scenario = SCENARIOS[sc_name]()
     rng = np.random.default_rng(cfg.seed)
 
     rows = []
-    jobs = list(range(cfg.reps))
+    if rep_count is None:
+        rep_count = cfg.reps - rep_start
+    rep_end = min(rep_start + rep_count, cfg.reps)
+    if rep_start < 0 or rep_start >= cfg.reps:
+        raise ValueError("rep_start must be in [0, reps)")
+    if rep_count <= 0:
+        raise ValueError("rep_count must be positive")
+
+    jobs = list(range(rep_start, rep_end))
     it = jobs if no_progress else tqdm(jobs, desc=f"{sc_name} K={cfg.K} nmin={cfg.n_min}")
 
     for rep in it:
@@ -82,16 +98,24 @@ def run_sweep(sc_name: str, cfg: SimConfig, outdir: Path, no_progress: bool = Fa
     tag = f"{sc_name}_K{cfg.K}_nmin{cfg.n_min}"
     run_dir = outdir / tag
     run_dir.mkdir(parents=True, exist_ok=True)
-    df.to_csv(run_dir / "metrics.csv", index=False)
-    with open(run_dir / "config.json", "w") as f:
+    if rep_start == 0 and rep_end == cfg.reps:
+        metrics_path = run_dir / "metrics.csv"
+        config_path = run_dir / "config.json"
+    else:
+        metrics_path = run_dir / f"metrics_part_{rep_start}_{rep_end - 1}.csv"
+        config_path = run_dir / f"config_part_{rep_start}_{rep_end - 1}.json"
+
+    df.to_csv(metrics_path, index=False)
+    with open(config_path, "w") as f:
         json.dump({
             "scenario": sc_name, "K": cfg.K, "n_min": cfg.n_min,
             "n_max": cfg.n_max, "reps": cfg.reps, "em_iters": cfg.em_iters,
             "seed": cfg.seed, "use_diag": cfg.use_diag,
+            "rep_start": rep_start, "rep_end": rep_end,
         }, f, indent=2)
 
     # Print summary
-    print(f"\n  [{tag}] {len(df)} reps")
+    print(f"\n  [{tag}] {len(df)} reps (range {rep_start}-{rep_end - 1})")
     for col in ["rmse_oracle", "rmse_vaneb", "rmse_npeb", "rmse_adamix"]:
         if col in df.columns:
             print(f"    {col:20s}: {df[col].mean():.4f} ± {df[col].std():.4f}")
