@@ -39,7 +39,23 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
 fi
 
 ARRAY_OFFSET=${ARRAY_OFFSET:-0}
-CONFIG_INDEX=$((SLURM_ARRAY_TASK_ID + ARRAY_OFFSET))
+TASK_ID=$((SLURM_ARRAY_TASK_ID + ARRAY_OFFSET))
+CONFIG_INDEX=$TASK_ID
+REP_START=0
+REP_COUNT=0
+
+if [[ -n "${TASK_FILE:-}" ]]; then
+  if [[ ! -f "$TASK_FILE" ]]; then
+    echo "TASK_FILE not found: $TASK_FILE" >&2
+    exit 1
+  fi
+  LINE_NUM=$((TASK_ID + 1))
+  read -r CONFIG_INDEX REP_START REP_COUNT < <(sed -n "${LINE_NUM}p" "$TASK_FILE")
+  if [[ -z "${CONFIG_INDEX:-}" ]]; then
+    echo "No task entry for index ${TASK_ID} in ${TASK_FILE}" >&2
+    exit 1
+  fi
+fi
 
 # Optional venv activation if present.
 if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
@@ -58,8 +74,16 @@ fi
 # RUN_ARGS can be exported at submit time, e.g.
 # RUN_ARGS="--scenario poisson --reps 30"
 # shellcheck disable=SC2086
-"$PY" run_all.py \
-  --config-index "$CONFIG_INDEX" \
-  --no-progress \
-  --outdir "${OUTPUT_DIR:-outputs}" \
-  ${RUN_ARGS:-}
+RUN_CMD=("$PY" run_all.py
+  --config-index "$CONFIG_INDEX"
+  --no-progress
+  --outdir "${OUTPUT_DIR:-outputs}")
+
+if [[ "$REP_COUNT" -gt 0 ]]; then
+  RUN_CMD+=(--rep-start "$REP_START" --rep-count "$REP_COUNT")
+fi
+
+# shellcheck disable=SC2086
+RUN_CMD+=(${RUN_ARGS:-})
+
+"${RUN_CMD[@]}"

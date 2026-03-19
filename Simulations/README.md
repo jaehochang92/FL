@@ -163,6 +163,12 @@ bash Simulations/submit_slurm_array.sh --account <your_account> --diag
 # Submit with scenario and replicate options
 bash Simulations/submit_slurm_array.sh --account <your_account> --scenario poisson --reps 50 --diag
 
+# Use up to 999 array tasks by sharding reps across jobs
+bash Simulations/submit_slurm_array.sh --account <your_account> --jobs 999 --diag
+
+# Alternative: fixed number of reps per task (e.g., 4)
+bash Simulations/submit_slurm_array.sh --account <your_account> --reps-per-job 4 --diag
+
 # Alternative: use RUN_ARGS environment variable (legacy approach still supported)
 export RUN_ARGS="--scenario poisson --reps 50 --diag"
 bash Simulations/submit_slurm_array.sh --account <your_account>
@@ -177,7 +183,8 @@ bash Simulations/submit_slurm_array.sh --diag
 - **Direct flag arguments:** `submit_slurm_array.sh` now forwards unrecognized `--flags` to `run_all.py` automatically. Use `--diag`, `--scenario`, `--reps`, `--outdir`, etc. directly on the command line.
 - **Legacy RUN_ARGS:** Still supported for backward compatibility; `submit_slurm_array.sh` merges both CLI args and `RUN_ARGS`.
 - **SLURM-specific options:** `--account`, `--partition`, `--qos`, `--time`, `--mem`, `--cpus` are reserved for SLURM configuration.
-- **Array indexing:** Zero-based (`SLURM_ARRAY_TASK_ID` maps to `--config-index`).
+- **Rep sharding:** `--jobs` targets a maximum number of array tasks by splitting replicates; `--reps-per-job` sets an explicit shard size.
+- **Array indexing:** Zero-based. When rep sharding is enabled, each task maps to a `(config_index, rep_range)` pair from a manifest.
 - **Config discovery:** The script uses `python Simulations/run_all.py --list-configs` to determine array size.
 - **Manual task execution:** `python Simulations/run_all.py --config-index <idx> --no-progress --diag`.
 - **Python interpreter:** Set `PYTHON_BIN` if your cluster does not use `python3`.
