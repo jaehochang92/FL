@@ -46,6 +46,15 @@ REP_COUNT=0
 
 if [[ -n "${TASK_FILE:-}" ]]; then
   if [[ ! -f "$TASK_FILE" ]]; then
+    TASK_BASENAME="$(basename "$TASK_FILE")"
+    for candidate in "$SUBMIT_DIR/task_manifests/$TASK_BASENAME" "$SUBMIT_DIR/Simulations/task_manifests/$TASK_BASENAME" "$SUBMIT_DIR/logs/$TASK_BASENAME"; do
+      if [[ -f "$candidate" ]]; then
+        TASK_FILE="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ ! -f "$TASK_FILE" ]]; then
     echo "TASK_FILE not found: $TASK_FILE" >&2
     exit 1
   fi

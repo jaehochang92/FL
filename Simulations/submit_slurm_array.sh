@@ -184,7 +184,9 @@ echo "RUN_ARGS='${RUN_ARGS}'"
 LOGS_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOGS_DIR"
 
-TASK_FILE="$LOGS_DIR/task_manifest_$(date +%Y%m%d_%H%M%S)_$$.txt"
+TASK_DIR="$SCRIPT_DIR/task_manifests"
+mkdir -p "$TASK_DIR"
+TASK_FILE="$TASK_DIR/task_manifest_$(date +%Y%m%d_%H%M%S)_$$.txt"
 if [[ -n "${SHARD_REPS}" ]]; then
   : > "$TASK_FILE"
   while IFS= read -r line; do
