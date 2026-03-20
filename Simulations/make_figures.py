@@ -20,6 +20,8 @@ ESTIMATORS = [
     ("rmse_vaneb", "VANEB", "#0B5FFF", "o"),
     ("rmse_npeb", "NPEB", "#E76F51", "s"),
     ("rmse_adamix", "AdaMix", "#2A9D8F", "^"),
+    ("rmse_fedavg", "FedAvg", "#FF6B6B", "v"),
+    ("rmse_nocomm", "NoComm", "#95A3A3", "x"),
     ("rmse_oracle", "Oracle", "#6C757D", "D"),
 ]
 

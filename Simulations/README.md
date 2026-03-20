@@ -10,11 +10,13 @@ The simulation framework is organized around a shared `Scenario` base class with
 - `logistic`: multiclass logistic regression with $C = 3$ classes
 - `poisson`: Poisson regression fit by IRLS
 
-All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and report client-level RMSE for four estimators:
+All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and report client-level RMSE for six estimators:
 
 - `vaneb`: the proposed variance-adaptive NPEB estimator
 - `npeb`: the Soloff et al. homoscedastic NPMLE baseline
 - `adamix`: Gaussian-mixture empirical Bayes baseline
+- `fedavg`: Federated Averaging (McMahan et al.)
+- `nocomm`: No-Communication Baseline (clients use local MLEs independently)
 - `oracle`: Bayes posterior mean under the true prior and variance model
 
 Current prior setup:
