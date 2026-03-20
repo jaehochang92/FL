@@ -486,6 +486,54 @@ def oracle_estimator(
     return np.nan_to_num(theta_hat, nan=0.0, posinf=0.0, neginf=0.0)
 
 
+def fedavg_estimator(
+    x: np.ndarray,
+    em_iters: int,
+) -> Tuple[np.ndarray, float]:
+    """FedAvg: Federated Averaging (McMahan et al.).
+    
+    Each round: compute global average of client estimates.
+    All clients receive the same global estimate.
+    
+    Args:
+        x: (K, d) local MLEs from clients
+        em_iters: number of communication rounds
+    
+    Returns:
+        theta_hat: (K, d) global average replicated for all clients
+        time_elapsed: computation time
+    """
+    t0 = time.time()
+    K, d = x.shape
+    
+    # FedAvg rounds: compute global average each round
+    for _ in range(em_iters):
+        global_estimate = np.mean(x, axis=0, keepdims=True)  # (1, d)
+    
+    # Replicate global average for all K clients
+    theta_hat = np.broadcast_to(global_estimate, (K, d)).copy()
+    
+    return theta_hat, time.time() - t0
+
+
+def nocomm_estimator(
+    x: np.ndarray,
+) -> Tuple[np.ndarray, float]:
+    """NoComm: No-Communication Baseline.
+    
+    Clients use their local estimates without any communication or pooling.
+    
+    Args:
+        x: (K, d) local MLEs from clients
+    
+    Returns:
+        theta_hat: (K, d) local MLEs unchanged
+        time_elapsed: computation time (near zero)
+    """
+    t0 = time.time()
+    return x.copy(), time.time() - t0
+
+
 # ============================================================================
 # GMM helpers for AdaMix
 # ============================================================================
@@ -607,6 +655,12 @@ class Scenario(ABC):
         except Exception:
             theta_adamix = np.full_like(x, np.nan)
 
+        # FedAvg (McMahan et al.)
+        theta_fedavg, fedavg_time = fedavg_estimator(x, cfg.em_iters)
+        
+        # NoComm: Local estimates (no communication)
+        theta_nocomm, nocomm_time = nocomm_estimator(x)
+
         return {
             "scenario": self.name,
             "K": K,
@@ -616,6 +670,10 @@ class Scenario(ABC):
             "rmse_vaneb": rmse(theta_vaneb, theta_true),
             "rmse_npeb": rmse(theta_npeb, theta_true),
             "rmse_adamix": rmse(theta_adamix, theta_true),
+            "rmse_fedavg": rmse(theta_fedavg, theta_true),
+            "rmse_nocomm": rmse(theta_nocomm, theta_true),
             "vaneb_time": vaneb_time,
             "npeb_time": npeb_time,
+            "fedavg_time": fedavg_time,
+            "nocomm_time": nocomm_time,
         }
