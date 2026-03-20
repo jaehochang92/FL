@@ -118,12 +118,10 @@ def _plot_sweep_on_ax(
             means,
             color=color,
             marker=marker,
-            linewidth=2.1,
+            linewidth=1,
             markersize=5.5,
             label=label,
         )
-        lower_bound = np.maximum(means - sems, 1e-5)
-        ax.fill_between(x_values, lower_bound, means + sems, color=color, alpha=0.12)
 
     ax.set_xscale("log", base=2)
     ax.set_yscale("log", base=2)
