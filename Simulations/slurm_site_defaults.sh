@@ -9,8 +9,8 @@ ACCOUNT="PAS1316"
 # PARTITION=""
 # QOS=""
 # TIME_LIMIT="24:00:00"
-MEMORY="16G"
-CPUS="2"
+MEMORY="32G"
+CPUS="4"
 
 # Optional runner defaults:
 # RUN_ARGS="--scenario poisson --reps 50"
