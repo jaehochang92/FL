@@ -5,8 +5,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import matplotlib.ticker as ticker
-import numpy as np  # 방어적 프로그래밍을 위해 numpy 추가
+import numpy as np
 
 from run_all import K_FIXED, NMIN_FIXED
 
@@ -24,6 +23,15 @@ ESTIMATORS = [
     ("rmse_nocomm", "NoComm", "#95A3A3", "x"),
     ("rmse_oracle", "Oracle", "#6C757D", "D"),
 ]
+
+ESTIMATOR_LINESTYLES = {
+    "rmse_vaneb": "-",
+    "rmse_npeb": "--",
+    "rmse_adamix": "-.",
+    "rmse_fedavg": ":",
+    "rmse_nocomm": (0, (6, 2)),
+    "rmse_oracle": (0, (3, 1, 1, 1)),
+}
 
 SCENARIO_TITLES = {
     "quadratic": "Quadratic variance",
@@ -93,6 +101,7 @@ def _plot_sweep_on_ax(
     fixed_key: str,
     fixed_value: int,
     show_legend: bool = True,
+    combined_view: bool = False,
 ) -> bool:
     subset = summary[
         (summary["scenario"] == scenario) &
@@ -112,24 +121,33 @@ def _plot_sweep_on_ax(
             continue
 
         means = subset[col_mean].to_numpy()
-        sems = subset[col_sem].to_numpy()
+        line_kwargs = {
+            "linewidth": 1.5 if combined_view else 1,
+            "alpha": 0.95,
+            "label": label,
+            "color": color,
+        }
+        line_kwargs.update({
+                "linestyle": ESTIMATOR_LINESTYLES.get(metric, "-"),
+                "marker": marker,
+                "markersize": 4.5,
+                "markeredgecolor": "white",
+                "markeredgewidth": 0.6,
+            })
         ax.plot(
             x_values,
             means,
-            color=color,
-            marker=marker,
-            linewidth=1,
-            markersize=5.5,
-            label=label,
+            **line_kwargs,
         )
 
-    ax.set_xscale("log", base=2)
-    ax.set_yscale("log", base=2)
-    ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.set_xscale("log", base=10)
+    ax.set_yscale("log", base=10)
     ax.set_xticks(x_values)
-    ax.set_xlabel(r"$K$ (Log Scale)" if x_key == "K" else r"$n_{\min}$ (Log Scale)", fontsize=11)
-    ax.set_ylabel("RMSE (Log Scale)", fontsize=11)
+    ax.set_xticklabels([str(v) for v in x_values])
+    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
+    ax.set_ylabel("RMSE", fontsize=11)
     ax.set_title(SCENARIO_TITLES[scenario] + " (Log-Log)", fontsize=12, pad=8)
+    ax.margins(x=0.12, y=0.08)
     if show_legend:
         ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
     return True
@@ -169,7 +187,7 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
         ("poisson", "nmin", "K", K_FIXED, "Poisson: nmin-sweep"),
     ]
 
-    fig, axes = plt.subplots(3, 2, figsize=(11.5, 13.0), constrained_layout=True)
+    fig, axes = plt.subplots(3, 2, figsize=(12.4, 13.8), constrained_layout=True)
     axes = axes.ravel()
 
     any_plotted = False
@@ -182,6 +200,7 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
             fixed_key,
             fixed_value,
             show_legend=False,
+            combined_view=True,
         )
         if not ok:
             ax.axis("off")
@@ -198,7 +217,18 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
     handles = []
     labels = []
     for metric, label, color, marker in ESTIMATORS:
-        h = plt.Line2D([], [], color=color, marker=marker, linewidth=2.1, markersize=5.5, label=label)
+        h = plt.Line2D(
+            [],
+            [],
+            color=color,
+            linestyle=ESTIMATOR_LINESTYLES.get(metric, "-"),
+            marker=marker,
+            linewidth=2.1,
+            markersize=5.0,
+            markeredgecolor="white",
+            markeredgewidth=0.5,
+            label=label,
+        )
         handles.append(h)
         labels.append(label)
     fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.02))
