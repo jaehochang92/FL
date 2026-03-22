@@ -28,8 +28,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "SELECT SWEEP TYPE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "1) nmin-sweep:  nmin ∈ [5, 10, 20, 40] with K=3200"
-echo "2) K-sweep:     K ∈ [50, 200, 800, 3200] with nmin=40"
+echo "1) nmin-sweep with fixed K"
+echo "2) K-sweep with fixed nmin"
 echo ""
 
 read -p "Enter choice (1 or 2): " sweep_choice
