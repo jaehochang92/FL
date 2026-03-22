@@ -30,8 +30,8 @@ Current prior setup:
 
 For each scenario, `run_all.py` executes two sweeps (paper-aligned):
 
-- $n_{\min} \in \{5, 10, 20, 40\}$ with $K = 200$ fixed
-- $K \in \{50, 200, 800, 3200\}$ with $n_{\min} = 20$ fixed
+- $n_{\min} \in \{5, 10, 20, 40\}$ with $K = 3200$ fixed
+- $K \in \{50, 200, 800, 3200\}$ with $n_{\min} = 40$ fixed
 
 The default run uses 100 replicates per configuration and sets client sizes as
 $n_k \sim \mathrm{Unif}(n_{\min}, 2 n_{\min})$.
@@ -42,6 +42,51 @@ $n_k \sim \mathrm{Unif}(n_{\min}, 2 n_{\min})$.
 - **Diagonal (`--diag` flag):** VANEB initializes with full Fisher but uses diagonal-only precision in 25 EM iterations, skipping expensive matrix operations. ~10-15% faster with small accuracy trade-off. Recommended for K ≥ 500.
 
 Choice is controlled by the `--diag` CLI flag (see examples below).
+
+## Sweep Type Selection
+
+By default, `run_all.py` runs both sweeps (n_min and K) for specified scenarios. To run only one sweep type:
+
+- **`--sweep-type nmin`:** Run $n_{\min}$-sweep only ($n_{\min} \in \{5,10,20,40\}$ with $K=3200$ fixed)
+- **`--sweep-type K`:** Run $K$-sweep only ($K \in \{50,200,800,3200\}$ with $n_{\min}=40$ fixed)
+
+Examples:
+
+```bash
+# Both sweeps (default)
+python Simulations/run_all.py --scenario quadratic
+
+# Only n_min sweep
+python Simulations/run_all.py --scenario quadratic --sweep-type nmin
+
+# Only K sweep
+python Simulations/run_all.py --scenario quadratic --sweep-type K
+```
+
+### Interactive Sweep Selection (`select_sweep.sh`)
+
+For SLURM submission, use the interactive `select_sweep.sh` script to choose sweep type and scenario(s) via menu prompts:
+
+```bash
+bash Simulations/select_sweep.sh
+
+# You'll be prompted to choose:
+# 1) nmin-sweep with fixed K
+# 2) K-sweep with fixed nmin
+# Then:
+# 1) All scenarios (quadratic, logistic, poisson)
+# 2) Quadratic only
+# 3) Logistic only
+# 4) Poisson only
+```
+
+You can also preset SLURM options before the menu prompts:
+
+```bash
+bash Simulations/select_sweep.sh --account myaccount --diag --time 24:00:00
+```
+
+The script delegates to `submit_slurm_array.sh` after collecting menu selections, combining both interactive choices and CLI-provided options.
 
 ## Quick Start
 
@@ -59,6 +104,12 @@ python Simulations/run_all.py --smoke
 
 # Run one scenario only
 python Simulations/run_all.py --scenario logistic
+
+# Run only the n_min sweep (nmin ∈ {5,10,20,40} with K=200 fixed)
+python Simulations/run_all.py --sweep-type nmin
+
+# Run only the K sweep (K ∈ {50,200,800,3200} with nmin=20 fixed)
+python Simulations/run_all.py --sweep-type K
 
 # Fast mode for specific config
 python Simulations/run_all.py --config-index 5 --diag --reps 10
@@ -84,6 +135,10 @@ python Simulations/make_figures.py
 
 # Generate a 3D illustration of prior atoms
 python Simulations/plot_prior_atoms_3d.py
+
+# Interactive SLURM sweep selector (prompts for sweep type & scenario)
+bash Simulations/select_sweep.sh
+bash Simulations/select_sweep.sh --account myaccount --diag
 ```
 
 ## Performance Optimization: `--diag` Flag
@@ -168,6 +223,7 @@ Outputs are written under `Simulations/outputs/` when launched from the reposito
 | `plot_prior_atoms_3d.py` | Create a 3D illustration of the five-curve prior atoms |
 | `slurm_array_job.sh` | One SLURM array task = one indexed simulation config |
 | `submit_slurm_array.sh` | Helper to submit the full config list as a SLURM array |
+| `select_sweep.sh` | Interactive menu to select sweep type (nmin or K) and scenario(s), then delegate to `submit_slurm_array.sh` |
 | `environment.yml` | Conda environment definition for local/HPC reproducibility |
 | `requirements.txt` | Python dependencies |
 

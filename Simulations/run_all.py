@@ -41,24 +41,31 @@ K_FIXED = K_SWEEP[3]
 REPS = 200
 
 
-def build_configs(smoke: bool = False):
-    """Build list of (scenario_name, SimConfig) tuples for the full sweep."""
+def build_configs(smoke: bool = False, sweep_type: Optional[str] = None):
+    """Build list of (scenario_name, SimConfig) tuples for the full sweep.
+    
+    Args:
+        smoke: Quick smoke test with reduced sizes.
+        sweep_type: Filter to 'nmin', 'K', or None (both). Defaults to None.
+    """
     configs = []
     reps = 10 if smoke else REPS
 
     for sc_name in SCENARIOS:
         # n_min sweep (K fixed)
-        for nmin in (NMIN_SWEEP[:1] if smoke else NMIN_SWEEP):
-            K = 50 if smoke else K_FIXED
-            configs.append((sc_name, SimConfig(
-                K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
-            )))
+        if sweep_type is None or sweep_type == "nmin":
+            for nmin in (NMIN_SWEEP[:1] if smoke else NMIN_SWEEP):
+                K = 50 if smoke else K_FIXED
+                configs.append((sc_name, SimConfig(
+                    K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
+                )))
         # K sweep (n_min fixed)
-        for K in (K_SWEEP[:1] if smoke else K_SWEEP):
-            nmin = NMIN_FIXED
-            configs.append((sc_name, SimConfig(
-                K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
-            )))
+        if sweep_type is None or sweep_type == "K":
+            for K in (K_SWEEP[:1] if smoke else K_SWEEP):
+                nmin = NMIN_FIXED
+                configs.append((sc_name, SimConfig(
+                    K=K, reps=reps, n_min=nmin, n_max=2 * nmin,
+                )))
 
     return configs
 
@@ -158,6 +165,9 @@ def main():
     parser.add_argument("--scenario", type=str, default=None,
                         choices=list(SCENARIOS.keys()),
                         help="Run only one scenario (default: all)")
+    parser.add_argument("--sweep-type", type=str, default=None,
+                        choices=["nmin", "K"],
+                        help="Run only nmin-sweep or K-sweep (default: both)")
     parser.add_argument("--smoke", action="store_true",
                         help="Quick smoke test (tiny K, few reps)")
     parser.add_argument("--dry-run", action="store_true",
@@ -181,7 +191,7 @@ def main():
     warnings.filterwarnings("ignore", category=ConvergenceWarning)
     warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-    configs = build_configs(smoke=args.smoke)
+    configs = build_configs(smoke=args.smoke, sweep_type=args.sweep_type)
     if args.scenario:
         configs = [(n, c) for n, c in configs if n == args.scenario]
 

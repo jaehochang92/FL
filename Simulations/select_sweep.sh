@@ -37,9 +37,11 @@ read -p "Enter choice (1 or 2): " sweep_choice
 case "$sweep_choice" in
   1)
     echo "✓ Selected: nmin-sweep"
+    SUBMIT_ARGS+=("--sweep-type" "nmin")
     ;;
   2)
     echo "✓ Selected: K-sweep"
+    SUBMIT_ARGS+=("--sweep-type" "K")
     ;;
   *)
     echo "Error: Invalid choice '$sweep_choice'. Please enter 1 or 2." >&2
