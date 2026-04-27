@@ -5,10 +5,10 @@ Scenario (iii): Poisson regression.
 Model:
     θ^(k) ∈ R^3 ~ G_0  (5-curve mixture prior)
     Each client has n_k observations:
-        X_i ~ N(0, σ_x^2 I_3),  Y_i ~ Poisson(exp(X_i^T θ))
+        X_i ~ N(0, Σ_{x,k}),  Y_i ~ Poisson(exp(X_i^T θ))
     MLE θ^(k)_hat via IRLS (statsmodels GLM).
-    Population Fisher diagonal:
-        F_j(θ) = (σ_x^2 + σ_x^4 θ_j^2) exp(σ_x^2 ||θ||^2 / 2)
+    Population Fisher (full covariance):
+        F(θ) = exp(θ^T Σ_x θ / 2) [ Σ_x + (Σ_x θ)(Σ_x θ)^T ]
 """
 
 import warnings
@@ -19,9 +19,11 @@ from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
     sample_prior, _clip_spd, _batch_inv,
 )
-from typing import Dict, Callable
+from typing import Dict, Callable, Optional
 
 FEATURE_SCALE = .1  # σ_x
+FEATURE_EIGEN_MIN = 0.5
+FEATURE_EIGEN_MAX = 2.0
 
 # The Poisson exp link makes Fisher information grow as exp(σ²‖θ‖²/2).  With
 # the shared prior curves the trefoil knot reaches ‖θ‖≈4.9, giving a per-obs
@@ -32,21 +34,52 @@ FEATURE_SCALE = .1  # σ_x
 PRIOR_SCALE = .7  # applied to sample_prior output in generate_data
 
 
-def _population_fisher_full(theta: np.ndarray) -> np.ndarray:
+def _sample_client_covariances(
+    K: int,
+    rng: np.random.Generator,
+    eig_min: float = FEATURE_EIGEN_MIN,
+    eig_max: float = FEATURE_EIGEN_MAX,
+) -> np.ndarray:
+    """Sample K SPD feature covariances Σ_{x,k} with bounded eigenvalues."""
+    covariances = np.zeros((K, DIM, DIM))
+    base_var = FEATURE_SCALE ** 2
+    for k in range(K):
+        Q, _ = np.linalg.qr(rng.standard_normal((DIM, DIM)))
+        eigvals = base_var * rng.uniform(eig_min, eig_max, size=DIM)
+        covariances[k] = Q @ np.diag(eigvals) @ Q.T
+    return _clip_spd(covariances, min_eig=1e-8, max_eig=1e6)
+
+
+def _population_fisher_full(
+    theta: np.ndarray,
+    sigma_x: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Closed-form population Fisher (full covariance) for Poisson regression.
 
-    For X ~ N(0, σ² I):
-        F(θ) = exp(σ² ||θ||² / 2) [ σ² I + σ⁴ θ θ^T ].
+    For X ~ N(0, Σ_x):
+        F(θ) = exp(θ^T Σ_x θ / 2) [ Σ_x + (Σ_x θ)(Σ_x θ)^T ].
     """
-    sx2 = FEATURE_SCALE ** 2
     single = (theta.ndim == 1)
     if single:
         theta = theta[None, :]
-    norm_sq = np.sum(theta ** 2, axis=1)
-    scale = np.exp(sx2 * norm_sq / 2.0)[..., None, None]
-    outer = np.einsum("...i,...j->...ij", theta, theta)
-    eye = np.eye(DIM)
-    fisher = scale * (sx2 * eye + (sx2 ** 2) * outer)
+    m = theta.shape[0]
+
+    if sigma_x is None:
+        sigma_x = np.eye(DIM) * (FEATURE_SCALE ** 2)
+
+    sigma_x = np.asarray(sigma_x)
+    if sigma_x.ndim == 2:
+        sigma_x = np.broadcast_to(sigma_x, (m, DIM, DIM)).copy()
+    elif sigma_x.ndim == 3 and sigma_x.shape[0] == m:
+        sigma_x = sigma_x.copy()
+    else:
+        raise ValueError("sigma_x must have shape (d,d) or (m,d,d)")
+
+    sigma_x = _clip_spd(sigma_x, min_eig=1e-8, max_eig=1e6)
+    sigma_theta = np.einsum("mde,me->md", sigma_x, theta)
+    quad = np.einsum("md,md->m", theta, sigma_theta)
+    scale = np.exp(np.clip(quad / 2.0, -40.0, 40.0))[:, None, None]
+    fisher = scale * (sigma_x + np.einsum("md,me->mde", sigma_theta, sigma_theta))
     fisher = _clip_spd(fisher, min_eig=1e-4, max_eig=1e6)
     if single:
         return fisher[0]
@@ -57,13 +90,14 @@ def generate_poisson_data(
     theta_true: np.ndarray,
     n: int,
     rng: np.random.Generator,
+    chol_x: np.ndarray,
 ) -> tuple:
     """
     Generate Poisson regression data.
     Returns (y, X): y (n,) counts, X (n, d) features.
     """
     d = DIM
-    X = rng.standard_normal(size=(n, d)) * FEATURE_SCALE
+    X = rng.standard_normal(size=(n, d)) @ chol_x.T
     eta = np.clip(X @ theta_true, -10, 10)
     mu = np.exp(eta)
     y = rng.poisson(mu)
@@ -177,16 +211,26 @@ class PoissonScenario(Scenario):
         weights = np.asarray(cfg.prior_weights)
         theta_true = sample_prior(K, weights, rng) * PRIOR_SCALE
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
+        sigma_x = _sample_client_covariances(K, rng)
+        chol_x = np.linalg.cholesky(sigma_x)
 
         theta_hat = np.zeros((K, DIM))
         obs_cov = np.zeros((K, DIM, DIM))
-        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
+        fisher_oracle = _population_fisher_full(theta_true, sigma_x)
+        oracle_cov = _batch_inv(fisher_oracle, min_eig=1e-6, max_eig=1e6)
+        oracle_obs_var = np.zeros((K, DIM, DIM))
+        for i in range(K):
+            oracle_obs_var[i] = _clip_spd(
+                oracle_cov[i] / n_k[i],
+                min_eig=VARIANCE_BOUNDS["s_min"] / n_k[i],
+                max_eig=VARIANCE_BOUNDS["s_max"] / n_k[i],
+            )
 
         # Generate data and collect fit tuples
         X_list = []
         fit_tuples = []
         for i in range(K):
-            y, X = generate_poisson_data(theta_true[i], n_k[i], rng)
+            y, X = generate_poisson_data(theta_true[i], n_k[i], rng, chol_x[i])
             X_list.append(X)
             fit_tuples.append((y, X))
 
@@ -215,5 +259,6 @@ class PoissonScenario(Scenario):
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
             "X_list": X_list,
+            "Sigma_x": sigma_x,
             "use_diag": cfg.use_diag,
         }

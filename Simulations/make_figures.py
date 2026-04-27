@@ -20,7 +20,7 @@ ESTIMATORS = [
     ("rmse_npeb", "NPEB", "#E76F51", "s"),
     ("rmse_adamix", "AdaMix", "#2A9D8F", "^"),
     ("rmse_fedavg", "FedAvg", "#FF6B6B", "v"),
-    ("rmse_nocomm", "NoComm", "#95A3A3", "x"),
+    ("rmse_nocomm", "Local", "#95A3A3", "x"),
     ("rmse_oracle", "Oracle", "#6C757D", "D"),
 ]
 
@@ -38,6 +38,26 @@ SCENARIO_TITLES = {
     "logistic": "Multiclass logistic",
     "poisson": "Poisson regression",
 }
+
+BASE_FONT_SIZE = 15
+TICK_FONT_SIZE = BASE_FONT_SIZE
+AXIS_LABEL_FONT_SIZE = BASE_FONT_SIZE + 1
+TITLE_FONT_SIZE = BASE_FONT_SIZE + 2
+LEGEND_FONT_SIZE = BASE_FONT_SIZE - 5
+
+
+def _should_exclude_estimator(metric: str, scenario: str, x_key: str) -> bool:
+    """Hide estimators in selected panels when their scale dominates the plot."""
+    if metric != "rmse_fedavg":
+        return False
+
+    if scenario == "quadratic":
+        return True
+
+    if scenario == "logistic" and x_key == "K":
+        return True
+
+    return False
 
 
 def load_summary() -> pd.DataFrame:
@@ -90,7 +110,7 @@ def style_axes(ax: plt.Axes) -> None:
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", color="#D9DEE8", linewidth=0.8, alpha=0.9)
     ax.set_axisbelow(True)
-    ax.tick_params(labelsize=10)
+    ax.tick_params(labelsize=TICK_FONT_SIZE)
 
 
 def _plot_sweep_on_ax(
@@ -108,6 +128,9 @@ def _plot_sweep_on_ax(
         (summary[fixed_key] == fixed_value)
     ].sort_values(x_key)
 
+    if scenario == "poisson" and x_key == "nmin":
+        subset = subset[subset["nmin"] >= 10]
+
     if subset.empty:
         return False
 
@@ -115,6 +138,9 @@ def _plot_sweep_on_ax(
     x_values = subset[x_key].to_numpy()
 
     for metric, label, color, marker in ESTIMATORS:
+        if _should_exclude_estimator(metric, scenario, x_key):
+            continue
+
         col_mean = f"{metric}_mean"
         col_sem = f"{metric}_sem"
         if col_mean not in subset.columns or col_sem not in subset.columns:
@@ -122,7 +148,7 @@ def _plot_sweep_on_ax(
 
         means = subset[col_mean].to_numpy()
         line_kwargs = {
-            "linewidth": 1.5 if combined_view else 1,
+            "linewidth": 2,
             "alpha": 0.95,
             "label": label,
             "color": color,
@@ -141,15 +167,23 @@ def _plot_sweep_on_ax(
         )
 
     ax.set_xscale("log", base=10)
-    ax.set_yscale("log", base=10)
+    # ax.set_yscale("log", base=10)
     ax.set_xticks(x_values)
     ax.set_xticklabels([str(v) for v in x_values])
-    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=11)
-    ax.set_ylabel("RMSE", fontsize=11)
-    ax.set_title(SCENARIO_TITLES[scenario] + " (Log-Log)", fontsize=12, pad=8)
+    ax.set_xlabel(r"$K$" if x_key == "K" else r"$n_{\min}$", fontsize=AXIS_LABEL_FONT_SIZE)
+    ax.set_ylabel("RMSE", fontsize=AXIS_LABEL_FONT_SIZE)
+    ax.set_title(SCENARIO_TITLES[scenario] + " (Log x)", fontsize=TITLE_FONT_SIZE, pad=8)
     ax.margins(x=0.12, y=0.08)
-    if show_legend:
-        ax.legend(frameon=False, fontsize=9, ncol=2, loc="best")
+    if show_legend and fixed_key == "K":
+        ax.legend(
+            frameon=True,
+            fontsize=LEGEND_FONT_SIZE,
+            ncol=1,
+            loc="best",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            borderpad=0.5,
+        )
     return True
 
 
@@ -158,12 +192,15 @@ def plot_sweep_loglog(summary: pd.DataFrame, scenario: str, x_key: str, fixed_ke
         print(f"  [Skip] No data loaded yet. Cannot plot {output_name}.")
         return
 
-    fig, ax = plt.subplots(figsize=(5.2, 3.6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(7.4, 3.8), constrained_layout=False)
     ok = _plot_sweep_on_ax(ax, summary, scenario, x_key, fixed_key, fixed_value, show_legend=True)
     if not ok:
         plt.close(fig)
         print(f"  [Skip] No data found for {scenario} where {fixed_key}={fixed_value}. Skipping {output_name}.")
         return
+
+    # Keep space on the right for the out-of-axes legend.
+    fig.subplots_adjust(right=0.72)
 
     pdf_path = FIGURE_DIR / f"{output_name}_loglog.pdf"
     png_path = FIGURE_DIR / f"{output_name}_loglog.png"
@@ -187,7 +224,7 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
         ("poisson", "nmin", "K", K_FIXED, "Poisson: nmin-sweep"),
     ]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12.4, 13.8), constrained_layout=True)
+    fig, axes = plt.subplots(3, 2, figsize=(12.4, 13.8), constrained_layout=False)
     axes = axes.ravel()
 
     any_plotted = False
@@ -206,7 +243,7 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
             ax.axis("off")
             ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=11)
             continue
-        ax.set_title(title, fontsize=12, pad=8)
+        ax.set_title(title, fontsize=TITLE_FONT_SIZE, pad=8)
         any_plotted = True
 
     if not any_plotted:
@@ -231,7 +268,19 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
         )
         handles.append(h)
         labels.append(label)
-    fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.02))
+    # Reserve explicit top margin for the shared legend.
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=6,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.985),
+        borderaxespad=0.0,
+        fontsize=LEGEND_FONT_SIZE,
+    )
 
     pdf_path = FIGURE_DIR / "all_scenarios_combined_loglog.pdf"
     png_path = FIGURE_DIR / "all_scenarios_combined_loglog.png"
@@ -242,6 +291,12 @@ def plot_combined_loglog(summary: pd.DataFrame) -> None:
 
 def main() -> None:
     plt.rcParams.update({
+        "font.size": BASE_FONT_SIZE,
+        "axes.titlesize": TITLE_FONT_SIZE,
+        "axes.labelsize": AXIS_LABEL_FONT_SIZE,
+        "xtick.labelsize": TICK_FONT_SIZE,
+        "ytick.labelsize": TICK_FONT_SIZE,
+        "legend.fontsize": LEGEND_FONT_SIZE,
         "font.family": "serif",
         "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
         "mathtext.fontset": "dejavuserif",

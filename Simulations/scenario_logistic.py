@@ -5,7 +5,7 @@ Scenario (ii): Multiclass logistic regression with softmax (C = 3 classes).
 Model:
     θ^(k) ∈ R^3 — 3-d parameter (shared across classes via feature projection)
     Each client has n_k observations:
-        X_i ~ N(0, I_d),  Y_i ∈ {1,...,C}
+        X_i ~ N(0, Σ_{x,k}),  Y_i ∈ {1,...,C}
         P(Y_i = c | X_i) = softmax(X_i @ W)[c]
     where W = θ ⊗ β_c maps R^3 → R^C using fixed class embeddings β_c.
 
@@ -27,6 +27,8 @@ from scenario_base import (
 from typing import Dict, Optional, Callable
 
 C = 3  # number of classes
+FEATURE_EIGEN_MIN = 0.5
+FEATURE_EIGEN_MAX = 2.0
 
 # Fixed class embeddings β_c ∈ R^C used to map θ ∈ R^3 into C logits.
 # Logit_c(x) = (β_c^T @ θ) * (x^T @ e_c_proj)
@@ -71,6 +73,21 @@ def _get_mc_cache(n_mc: int) -> tuple:
     return proj_mc, proj_mc_sq
 
 
+def _sample_client_covariances(
+    K: int,
+    rng: np.random.Generator,
+    eig_min: float = FEATURE_EIGEN_MIN,
+    eig_max: float = FEATURE_EIGEN_MAX,
+) -> np.ndarray:
+    """Sample K SPD feature covariances Σ_{x,k} with bounded eigenvalues."""
+    covariances = np.zeros((K, DIM, DIM))
+    for k in range(K):
+        Q, _ = np.linalg.qr(rng.standard_normal((DIM, DIM)))
+        eigvals = rng.uniform(eig_min, eig_max, size=DIM)
+        covariances[k] = Q @ np.diag(eigvals) @ Q.T
+    return _clip_spd(covariances, min_eig=1e-6, max_eig=1e6)
+
+
 def _logits(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
     """Compute (n, C) logits for features X (n, d) and parameter θ (d,).
 
@@ -86,9 +103,14 @@ def _probs(X: np.ndarray, theta: np.ndarray) -> np.ndarray:
     return scipy_softmax(logit, axis=1)
 
 
-def generate_multiclass_data(theta_true: np.ndarray, n: int, rng: np.random.Generator) -> tuple:
+def generate_multiclass_data(
+    theta_true: np.ndarray,
+    n: int,
+    rng: np.random.Generator,
+    chol_x: np.ndarray,
+) -> tuple:
     d = DIM
-    X = rng.standard_normal(size=(n, d))
+    X = rng.standard_normal(size=(n, d)) @ chol_x.T
     probs = _probs(X, theta_true)  # (n, C)
     y = np.array([rng.choice(C, p=p) for p in probs]) 
     return y, X
@@ -260,7 +282,6 @@ class LogisticScenario(Scenario):
         n_k = data["n_k"]
         use_diag = data.get("use_diag", False)
         K = len(X_list)
-        # 생성 시점에 미리 projection 해둠 (연산 최적화)
         proj_list = [_project_features(X) for X in X_list]
 
         def prec_fn(atoms: np.ndarray) -> np.ndarray:
@@ -289,18 +310,30 @@ class LogisticScenario(Scenario):
         weights = np.asarray(cfg.prior_weights)
         theta_true = sample_prior(K, weights, rng)
         n_k = rng.integers(cfg.n_min, cfg.n_max + 1, size=K)
+        sigma_x = _sample_client_covariances(K, rng)
+        chol_x = np.linalg.cholesky(sigma_x)
 
         theta_hat = np.zeros((K, DIM))
         obs_cov = np.zeros((K, DIM, DIM))
-        oracle_obs_var = self.variance_fn(theta_true) / n_k[:, None, None]
+        oracle_obs_var = np.zeros((K, DIM, DIM))
 
         # Generate data and collect fit tuples
         X_list = []
         fit_tuples = []
         for i in range(K):
-            y, X = generate_multiclass_data(theta_true[i], n_k[i], rng)
+            y, X = generate_multiclass_data(theta_true[i], n_k[i], rng, chol_x[i])
             X_list.append(X)
             fit_tuples.append((y, X))
+
+            fisher_true = empirical_fisher_full(X, theta_true[i])
+            oracle_cov_i = _batch_inv(
+                fisher_true[None, :, :], min_eig=1e-6, max_eig=1e6
+            )[0] / n_k[i]
+            oracle_obs_var[i] = _clip_spd(
+                oracle_cov_i,
+                min_eig=VARIANCE_BOUNDS["s_min"] / n_k[i],
+                max_eig=VARIANCE_BOUNDS["s_max"] / n_k[i],
+            )
 
         # Fit clients in parallel
         fit_results = _parallel_fit_clients(
@@ -328,5 +361,6 @@ class LogisticScenario(Scenario):
             "oracle_obs_var": oracle_obs_var,
             "n_k": n_k,
             "X_list": X_list,
+            "Sigma_x": sigma_x,
             "use_diag": cfg.use_diag,
         }

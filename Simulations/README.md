@@ -7,8 +7,8 @@ Simulation code for the revised federated-learning experiments in the paper.
 The simulation framework is organized around a shared `Scenario` base class with three concrete scenarios:
 
 - `quadratic`: Gaussian sample means with diagonal variance $\Sigma(\theta) = {\rm diag}(\theta \odot \theta)$
-- `logistic`: multiclass logistic regression with $C = 3$ classes
-- `poisson`: Poisson regression fit by IRLS
+- `logistic`: multiclass logistic regression with $C = 3$ classes and client-specific design $X_i \sim N(0,\Sigma_{x,k})$
+- `poisson`: Poisson regression fit by IRLS with client-specific design $X_i \sim N(0,\Sigma_{x,k})$
 
 All scenarios use a fixed prior in $\mathbb{R}^3$ supported on five curves and report client-level RMSE for six estimators:
 
