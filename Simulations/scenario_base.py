@@ -5,7 +5,7 @@ Base class and estimator implementations for federated learning simulations.
 Scenario hierarchy:
     Scenario (ABC)
       ├─ QuadraticMeanScenario   — clients transmit sample means, quadratic variance
-      ├─ LogisticScenario        — clients transmit multiclass logit models (c=6)
+      ├─ LogisticScenario        — clients transmit multiclass logit models (C=3)
       └─ PoissonScenario         — clients transmit Poisson regression models
 
 Estimators (all scenarios share the same four):

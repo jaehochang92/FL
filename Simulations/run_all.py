@@ -110,7 +110,6 @@ def run_sweep(
 ):
     """Run one (scenario, config) combination and save results."""
     scenario = SCENARIOS[sc_name]()
-    rng = np.random.default_rng(cfg.seed)
 
     rows = []
     if rep_count is None:
@@ -126,6 +125,10 @@ def run_sweep(
 
     for rep in it:
         try:
+            # Per-rep RNG: each rep gets a unique seed regardless of which
+            # partial job (rep_start) it runs in.  Partial runs are now
+            # reproducible and independent across different rep_start values.
+            rng = np.random.default_rng([cfg.seed, rep])
             row = scenario.run_one(cfg.K, rep, cfg, rng)
             rows.append(row)
         except Exception as e:
