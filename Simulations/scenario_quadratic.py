@@ -13,7 +13,7 @@ VANEB uses the known variance function; NPEB uses local sample variances.
 import numpy as np
 from scenario_base import (
     Scenario, SimConfig, DIM, VARIANCE_BOUNDS,
-    sample_prior, _clip_spd, _batch_inv
+    sample_prior, _batch_inv
 )
 from typing import Dict, Callable
 
@@ -36,8 +36,7 @@ class QuadraticMeanScenario(Scenario):
             VARIANCE_BOUNDS["s_max"],
         )
         eye = np.eye(DIM)
-        cov = np.einsum("...i,ij->...ij", diag, eye)
-        return _clip_spd(cov, min_eig=1e-8, max_eig=1e8)
+        return np.einsum("...i,ij->...ij", diag, eye)
 
     def generate_data(self, K: int, cfg: SimConfig, rng: np.random.Generator) -> Dict:
         weights = np.asarray(cfg.prior_weights)
