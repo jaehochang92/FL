@@ -1,0 +1,10 @@
+Running 1 configurations...
+  Mode: FULL matrix precision (baseline) in EM updates
+
+  [quadratic_K50_nmin40] 5 reps (range 50-54)
+    rmse_oracle         : 0.1185 ± 0.0236
+    rmse_vaneb          : 0.3368 ± 0.0396
+    rmse_npeb           : 0.3372 ± 0.0403
+    rmse_adamix         : 0.3483 ± 0.0456
+
+Total time: 2.1s

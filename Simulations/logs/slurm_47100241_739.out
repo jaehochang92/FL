@@ -1,0 +1,11 @@
+Running 1 configurations...
+  Mode: FULL matrix precision (baseline) in EM updates
+  Error poisson K=3200 nmin=20 rep=95: VANEB fitting failed: Solution status is Unknown but Optimal is expected. Reason: Accessing interior-point solution whose problem status is Unknown.
+
+  [poisson_K3200_nmin20] 4 reps (range 95-99)
+    rmse_oracle         : 1.5386 ± 0.0045
+    rmse_vaneb          : 1.5256 ± 0.0089
+    rmse_npeb           : 1.7408 ± 0.0224
+    rmse_adamix         : 2.4103 ± 0.0353
+
+Total time: 5646.0s

@@ -1,0 +1,10 @@
+Running 1 configurations...
+  Mode: FULL matrix precision (baseline) in EM updates
+
+  [poisson_K50_nmin40] 5 reps (range 60-64)
+    rmse_oracle         : 1.3097 ± 0.0684
+    rmse_vaneb          : 1.6131 ± 0.0876
+    rmse_npeb           : 1.7521 ± 0.1476
+    rmse_adamix         : 1.9567 ± 0.1162
+
+Total time: 5.4s

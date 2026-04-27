@@ -1,0 +1,10 @@
+Running 1 configurations...
+  Mode: FULL matrix precision (baseline) in EM updates
+
+  [logistic_K3200_nmin10] 5 reps (range 10-14)
+    rmse_oracle         : 1.4358 ± 0.0325
+    rmse_vaneb          : 1.6774 ± 0.0311
+    rmse_npeb           : 2.4129 ± 0.0216
+    rmse_adamix         : 2.2707 ± 0.0364
+
+Total time: 2532.3s
